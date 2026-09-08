@@ -5,8 +5,8 @@ Bot Discord yang dikhususkan untuk **obfuscation Lua/LuaU** menggunakan engine P
 ## Fitur
 
 - Command `/obf` untuk meng-obfuscate file Lua atau source code yang ditempel langsung.
-- Preset: `Minify`, `Weak`, `Medium`, `Strong`, `Extreme`, dan `Roblox`.
-- Target: **Lua 5.1** dan **LuaU (Roblox)**.
+- Preset: `Minify`, `Weak`, `Medium`, `Strong`, dan `Extreme`. Preset `Roblox` sudah dihapus; default sekarang memakai `Medium` yang diperkuat untuk LuaU/Roblox.
+- Target: **LuaU (Roblox)** secara default, dengan opsi **Lua 5.1** jika dibutuhkan.
 - Opsi `pretty_print` dan custom random `seed`.
 - Dukungan pembatasan penggunaan berdasarkan channel dan role Discord.
 - File input maksimal 5 MB dan source maksimal 1.000.000 karakter.
@@ -49,8 +49,8 @@ npm start
 
 Opsi tambahan:
 
-- `preset`: preset obfuscation, default `Medium`.
-- `lua_version`: `Lua51` atau `LuaU`, default `Lua51`.
+- `preset`: preset obfuscation, default `Medium` hardened.
+- `lua_version`: `Lua51` atau `LuaU`, default `LuaU`.
 - `pretty_print`: format output agar lebih mudah dibaca, default `false`.
 - `seed`: seed acak agar hasil dapat direproduksi.
 

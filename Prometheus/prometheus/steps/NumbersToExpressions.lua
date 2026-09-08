@@ -180,7 +180,12 @@ function NumbersToExpressions:CreateNumberExpression(val, depth)
 		end
 
 		if format == "scientific" then
-			if val == 0 then
+			-- Keep integer literals as integer-looking values. In Lua 5.3+ a scientific
+			-- literal such as 1e0 has float subtype, and tostring(1e0) can become
+			-- "1.0", which changes user-visible output for code that stringifies
+			-- numbers. Luau is more forgiving here, but preserving exact semantics is
+			-- safer for executor compatibility.
+			if val == 0 or val == math.floor(val) then
 				return Ast.NumberExpression(val)
 			end
 

@@ -3,7 +3,7 @@ const { SlashCommandBuilder } = require("discord.js");
 // ─── Slash Command Definition ────────────────────────────────────────────────
 const obfuscateCommand = new SlashCommandBuilder()
   .setName("obf")
-  .setDescription("Obfuscate Lua code using ByteCode")
+  .setDescription("Obfuscate Lua/LuaU code using ByteCode")
   .addAttachmentOption((opt) =>
     opt
       .setName("file")
@@ -27,13 +27,12 @@ const obfuscateCommand = new SlashCommandBuilder()
         { name: "Medium", value: "Medium" },
         { name: "Strong", value: "Strong" },
         { name: "Extreme", value: "Extreme" },
-        { name: "Roblox", value: "Roblox" },
       ),
   )
   .addStringOption((opt) =>
     opt
       .setName("lua_version")
-      .setDescription("Target Lua version (default: Lua 5.1)")
+      .setDescription("Target Lua version (default: LuaU / Roblox)")
       .setRequired(false)
       .addChoices(
         { name: "Lua 5.1", value: "Lua51" },

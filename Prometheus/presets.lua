@@ -53,7 +53,7 @@ return {
 
 	-- Medium obfuscation. Moderate obfuscation, moderate performance loss.
 	["Medium"] = {
-		LuaVersion = "Lua51",
+		LuaVersion = "LuaU",
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
 		PrettyPrint = false,
@@ -75,10 +75,31 @@ return {
 					Shuffle = true,
 					Rotate = true,
 					LocalWrapperThreshold = 0,
+					LocalWrapperCount = 0,
+					LocalWrapperArgCount = 8,
+					MaxWrapperOffset = 32767,
+					Encoding = "mixed",
 				},
 			},
-			{ Name = "NumbersToExpressions", Settings = {} },
-			{ Name = "SplitStrings", Settings = {} },
+			{
+				Name = "NumbersToExpressions",
+				Settings = {
+					Threshold = 0.55,
+					InternalThreshold = 0.2,
+					NumberRepresentationMutation = true,
+					AllowedNumberRepresentations = { "hex", "normal" },
+				},
+			},
+			{
+				Name = "SplitStrings",
+				Settings = {
+					Threshold = 0.72,
+					MinLength = 5,
+					MaxLength = 14,
+					ConcatenationType = "custom",
+					CustomFunctionType = "global",
+				},
+			},
 			{ Name = "WrapInFunction", Settings = {} },
 		},
 	},
@@ -163,40 +184,4 @@ return {
 		},
 	},
 
-	-- Optimized for Roblox Luau. Strong protection + Luau compatible.
-	["Roblox"] = {
-		LuaVersion = "LuaU",
-		VarNamePrefix = "",
-		NameGenerator = "Mangled",
-		PrettyPrint = false,
-		Seed = 0,
-		Steps = {
-			{ Name = "EncryptStrings", Settings = {} },
-			{ Name = "SplitStrings", Settings = {} },
-			{
-				Name = "AntiTamper",
-				Settings = {
-					UseDebug = false,
-				},
-			},
-			{ Name = "Vmify", Settings = {} },
-			{
-				Name = "ConstantArray",
-				Settings = {
-					Threshold = 1,
-					StringsOnly = true,
-					Shuffle = true,
-					Rotate = true,
-					LocalWrapperThreshold = 0
-				},
-			},
-			{
-				Name = "NumbersToExpressions",
-				Settings = {
-					NumberRepresentationMutation = true
-				},
-			},
-			{ Name = "WrapInFunction", Settings = {} },
-		},
-	},
 }

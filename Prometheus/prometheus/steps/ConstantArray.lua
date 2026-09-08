@@ -113,6 +113,18 @@ local function callNameGenerator(generatorFunction, ...)
 	return generatorFunction(...);
 end
 
+local function maskPayload(str, key, step)
+	local out = {};
+	local prev = key;
+	for i = 1, #str do
+		local b = string.byte(str, i);
+		local encoded = (b + prev) % 256;
+		out[i] = string.char(encoded);
+		prev = (encoded + i + step) % 256;
+	end
+	return table.concat(out);
+end
+
 function ConstantArray:init(_) end
 
 function ConstantArray:createArray()
@@ -132,7 +144,8 @@ function ConstantArray:indexing(index, data)
 		local wrapper = wrappers[math.random(#wrappers)];
 
 		local args = {};
-		local ofs = index - self.wrapperOffset - wrapper.offset;
+		local encodedIndex = (index - self.wrapperOffset) * self.wrapperScale;
+		local ofs = encodedIndex - wrapper.offset;
 		for i = 1, self.LocalWrapperArgCount, 1 do
 			if i == wrapper.arg then
 				args[i] = Ast.NumberExpression(ofs);
@@ -149,7 +162,7 @@ function ConstantArray:indexing(index, data)
 	else
 		data.scope:addReferenceToHigherScope(self.rootScope, self.wrapperId);
 		return Ast.FunctionCallExpression(Ast.VariableExpression(self.rootScope, self.wrapperId), {
-			Ast.NumberExpression(index - self.wrapperOffset);
+			Ast.NumberExpression((index - self.wrapperOffset) * self.wrapperScale);
 		});
 	end
 end
@@ -229,9 +242,23 @@ function ConstantArray:addDecodeCode(ast)
 		"local strchar = string.char;",
 		"local insert = table.insert;",
 		"local concat = table.concat;",
+		"local byte = string.byte;",
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
+		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
 		for i = 1, #arr do
 			local data = arr[i];
 			if type(data) == "string" then
@@ -263,7 +290,7 @@ function ConstantArray:addDecodeCode(ast)
 					end
 					index = index + 1
 				end
-				arr[i] = concat(parts)
+				arr[i] = unmask(concat(parts))
 			end
 		end
 	end
@@ -304,9 +331,23 @@ function ConstantArray:addDecodeCode(ast)
 		"local strchar = string.char;",
 		"local insert = table.insert;",
 		"local concat = table.concat;",
+		"local byte = string.byte;",
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
+		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
 		for i = 1, #arr do
 			local data = arr[i];
 			if type(data) == "string" then
@@ -352,7 +393,7 @@ function ConstantArray:addDecodeCode(ast)
 
 					index = index + count
 				end
-				arr[i] = concat(parts)
+				arr[i] = unmask(concat(parts))
 			end
 		end
 	end
@@ -394,9 +435,23 @@ function ConstantArray:addDecodeCode(ast)
 		"local strchar = string.char;",
 		"local insert = table.insert;",
 		"local concat = table.concat;",
+		"local byte = string.byte;",
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
+		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
 		for i = 1, #arr do
 			local data = arr[i];
 			if type(data) == "string" then
@@ -431,7 +486,7 @@ function ConstantArray:addDecodeCode(ast)
 						end
 						index = index + 1
 					end
-					arr[i] = concat(parts)
+					arr[i] = unmask(concat(parts))
 				elseif first == "]]..prefix_1..[[" then
 					data = sub(data, 2)
 					local length = len(data)
@@ -476,7 +531,7 @@ function ConstantArray:addDecodeCode(ast)
 
 						idx = idx + count
 					end
-					arr[i] = concat(parts)
+					arr[i] = unmask(concat(parts))
 				end
 			end
 		end
@@ -539,6 +594,9 @@ function ConstantArray:createBase85Lookup()
 end
 
 function ConstantArray:encode(str)
+	if self.Encoding ~= "none" then
+		str = maskPayload(str, self.PayloadMaskKey, self.PayloadMaskStep);
+	end
 	if self.Encoding == "base64" then
 		return ((str:gsub('.', function(x)
 			local r,b='',x:byte()
@@ -643,6 +701,9 @@ function ConstantArray:apply(ast, pipeline)
 
 	self.constants = {};
 	self.lookup = {};
+	self.PayloadMaskKey = math.random(1, 255);
+	self.PayloadMaskStep = math.random(1, 255);
+	self.wrapperScale = math.random(2, 23);
 
 	-- Extract Constants
 	visitast(ast, nil, function(node, data)
@@ -788,11 +849,14 @@ function ConstantArray:apply(ast, pipeline)
 			local arg = funcScope:addVariable();
 			local addSubArg;
 
-			-- Create add and Subtract code
+			-- Decode the externally supplied constant-array index. The public callsite passes
+			-- a scaled value, so simple wrapper-call scanners no longer recover the raw index
+			-- by just adding/subtracting wrapperOffset.
+			local decodedArg = Ast.DivExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(self.wrapperScale));
 			if self.wrapperOffset < 0 then
-				addSubArg = Ast.SubExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(-self.wrapperOffset));
+				addSubArg = Ast.SubExpression(decodedArg, Ast.NumberExpression(-self.wrapperOffset));
 			else
-				addSubArg = Ast.AddExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(self.wrapperOffset));
+				addSubArg = Ast.AddExpression(decodedArg, Ast.NumberExpression(self.wrapperOffset));
 			end
 
 			-- Create and Add the Function Declaration
@@ -835,6 +899,9 @@ function ConstantArray:apply(ast, pipeline)
 
 	self.constants = nil;
 	self.lookup = nil;
+	self.PayloadMaskKey = nil;
+	self.PayloadMaskStep = nil;
+	self.wrapperScale = nil;
 end
 
 return ConstantArray;

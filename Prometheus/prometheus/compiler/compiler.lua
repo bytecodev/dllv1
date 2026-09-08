@@ -209,12 +209,21 @@ function Compiler:opaqueNumber(value)
     return opaqueNumberExpression(value, 0);
 end
 
+function Compiler:encodeBlockIdValue(value)
+    if type(value) ~= "number" then
+        return value;
+    end
+    local mul = self.pcMultiplier or 1;
+    local offset = self.pcOffset or 0;
+    return value * mul + offset;
+end
+
 function Compiler:blockIdExpression(value)
-    return opaqueNumberExpression(value, 0);
+    return opaqueNumberExpression(self:encodeBlockIdValue(value), 0);
 end
 
 function Compiler:thresholdExpression(value)
-    return opaqueNumberExpression(value, 0);
+    return opaqueNumberExpression(self:encodeBlockIdValue(value), 0);
 end
 
 function Compiler:compile(ast)
@@ -229,6 +238,11 @@ function Compiler:compile(ast)
     self.usedBlockIds = {};
     self.usedBlockIdBuckets = {};
     self.blockIdSalt = math.random(0, 7);
+    -- Encode the virtual program counter before it is stored in the runtime VM.
+    -- The dispatch tree compares encoded thresholds, so order is preserved while
+    -- static decoders no longer see the raw compiler block ids in the emitted code.
+    self.pcMultiplier = math.random(3, 47);
+    self.pcOffset = math.random(-2^24, 2^24);
 
     self.upvalVars = {};
     self.registerUsageStack = {};

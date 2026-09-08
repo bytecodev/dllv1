@@ -193,8 +193,11 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    const preset = interaction.options.getString("preset") ?? "Medium";
-    const luaVersion = interaction.options.getString("lua_version") ?? "Lua51";
+    const requestedPreset = interaction.options.getString("preset") ?? "Medium";
+    // Legacy safeguard: old Discord command schemas may still submit "Roblox" until /register is rerun.
+    // The Roblox preset was removed; hardened Medium is now the Roblox/LuaU default.
+    const preset = requestedPreset === "Roblox" ? "Medium" : requestedPreset;
+    const luaVersion = interaction.options.getString("lua_version") ?? "LuaU";
     const prettyPrint = interaction.options.getBoolean("pretty_print") ?? false;
     const seed =
       interaction.options.getInteger("seed") ??
@@ -284,7 +287,7 @@ client.on("interactionCreate", async (interaction) => {
       .setColor(COLOR_SUCCESS)
       .setTitle("Obfuscation Complete")
       .setDescription(
-        `**${sourceName}** obfuscated with preset **${preset}**`,
+        `**${sourceName}** obfuscated with hardened **${preset}**`,
       )
       .addFields(
         { name: "Preset", value: preset, inline: true },

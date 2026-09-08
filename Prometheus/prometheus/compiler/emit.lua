@@ -228,6 +228,20 @@ return function(Compiler)
             end
         end
 
+        local function decorateCondition(condition)
+            local style = math.random(1, 5);
+            if style == 1 then
+                return condition;
+            elseif style == 2 then
+                return Ast.AndExpression(condition, Ast.BooleanExpression(true), false);
+            elseif style == 3 then
+                return Ast.OrExpression(condition, Ast.BooleanExpression(false), false);
+            elseif style == 4 then
+                return Ast.EqualsExpression(Ast.NotExpression(condition, false), Ast.BooleanExpression(false), false);
+            end
+            return Ast.NotEqualsExpression(condition, Ast.BooleanExpression(false), false);
+        end
+
         -- Build an elseif chain for a range of blocks
         local function buildElseifChain(tb, l, r, pScope)
             -- Handle invalid range by returning an empty block
@@ -259,7 +273,7 @@ return function(Compiler)
                     tb[i].block.scope:setParent(ifScope);
                     local condition = buildBlockThresholdCondition(ifScope, tb[i].id, tb[i + 1].id, false);
                     table.insert(elseifs, {
-                        condition = condition,
+                        condition = decorateCondition(condition),
                         body = tb[i].block
                     });
                 end
@@ -269,7 +283,7 @@ return function(Compiler)
                 local elseBlock = tb[r].block;
 
                 return Ast.Block({
-                    Ast.IfStatement(firstCondition, firstBlock, elseifs, elseBlock);
+                    Ast.IfStatement(decorateCondition(firstCondition), firstBlock, elseifs, elseBlock);
                 }, ifScope);
             end
 
@@ -305,11 +319,43 @@ return function(Compiler)
             end
 
             return Ast.Block({
-                Ast.IfStatement(condition, trueBlock, {}, falseBlock);
+                Ast.IfStatement(decorateCondition(condition), trueBlock, {}, falseBlock);
             }, ifScope);
         end
 
-        local whileBody = buildElseifChain(blocks, 1, #blocks, self.containerFuncScope);
+        local function makeDeadDispatchGuard(body, pScope)
+            if #blocks < 2 then
+                return body;
+            end
+
+            local wrapped = body;
+            for _ = 1, math.random(1, 3) do
+                local guardScope = Scope:new(pScope);
+                wrapped.scope:setParent(guardScope);
+                local deadScope = Scope:new(guardScope);
+                local fakeId;
+                repeat
+                    fakeId = math.random(0, 2^21) * 8 + (self.blockIdSalt or 0);
+                until not self.usedBlockIds[fakeId];
+
+                local deadBlock = Ast.Block({
+                    self:setPos(deadScope, nil),
+                }, deadScope);
+
+                wrapped = Ast.Block({
+                    Ast.IfStatement(
+                        decorateCondition(Ast.EqualsExpression(self:pos(guardScope), self:blockIdExpression(fakeId), false)),
+                        deadBlock,
+                        {},
+                        wrapped
+                    );
+                }, guardScope);
+            end
+
+            return wrapped;
+        end
+
+        local whileBody = makeDeadDispatchGuard(buildElseifChain(blocks, 1, #blocks, self.containerFuncScope), self.containerFuncScope);
         if self.whileScope then
             -- Ensure whileScope is properly connected
             self.whileScope:setParent(self.containerFuncScope);

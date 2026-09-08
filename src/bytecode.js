@@ -6,7 +6,7 @@ const { toLuaLongString } = require("./luaString.js");
 // ─── Resolve paths ───────────────────────────────────────────────────────────
 const srcRoot = path.resolve(__dirname, "../bytecode");
 
-const PRESETS = Object.freeze(["Minify", "Weak", "Medium", "Strong", "Extreme", "Roblox"]);
+const PRESETS = Object.freeze(["Minify", "Weak", "Medium", "Strong", "Extreme"]);
 const LUA_VERSIONS = Object.freeze(["Lua51", "LuaU"]);
 
 // ─── Lua file discovery ──────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function ensureWasmoonLoaded() {
  * @param {object} options
  * @param {string} options.source
  * @param {string} options.filename
- * @param {"Minify"|"Weak"|"Medium"|"Strong"} options.preset
+ * @param {"Minify"|"Weak"|"Medium"|"Strong"|"Extreme"} options.preset
  * @param {"Lua51"|"LuaU"} options.luaVersion
  * @param {boolean} options.prettyPrint
  * @param {number} options.seed

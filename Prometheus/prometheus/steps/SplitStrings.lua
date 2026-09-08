@@ -9,6 +9,7 @@ local Ast = require("prometheus.ast");
 local visitAst = require("prometheus.visitast");
 local Parser = require("prometheus.parser");
 local util = require("prometheus.util");
+local randomStrings = require("prometheus.randomStrings");
 local enums = require("prometheus.enums")
 
 local LuaVersion = enums.LuaVersion;
@@ -99,7 +100,7 @@ local function generateStrCatNode(chunks)
 	return generatedNode
 end
 
-local customVariants = 2;
+local customVariants = 4;
 local custom1Code = [=[
 function custom(table)
     local stringTable, str = table[#table], "";
@@ -120,6 +121,32 @@ function custom(tb)
 end
 ]=];
 
+local custom3Code = [=[
+function custom(pack)
+	local order, chunks = pack[1], pack[2];
+	local out = {};
+	for i = 1, #order, 1 do
+		out[i] = chunks[order[i]];
+	end
+	return table.concat(out);
+end
+]=];
+
+local custom4Code = [=[
+function custom(pack)
+	local order, chunks = pack[1], pack[#pack];
+	local str = "";
+	local i = 1;
+	while i <= #order do
+		str = str .. chunks[order[i]];
+		i = i + 1;
+	end
+	return str;
+end
+]=];
+
+local customCodes = { custom1Code, custom2Code, custom3Code, custom4Code };
+
 local function generateCustomNodeArgs(chunks, data, variant)
 	local shuffled = {};
 	local shuffledIndices = {};
@@ -132,37 +159,47 @@ local function generateCustomNodeArgs(chunks, data, variant)
 		shuffled[v] = chunks[i];
 	end
 
-	-- Custom Function Type 1
-	if variant == 1 then
-		local args = {};
-		local tbNodes = {};
-
-		for i, v in ipairs(shuffledIndices) do
-			table.insert(args, Ast.TableEntry(Ast.NumberExpression(v)));
-		end
-
-		for i, chunk in ipairs(shuffled) do
-			table.insert(tbNodes, Ast.TableEntry(Ast.StringExpression(chunk)));
-		end
-
-		local tb = Ast.TableConstructorExpression(tbNodes);
-
-		table.insert(args, Ast.TableEntry(tb));
-		return {Ast.TableConstructorExpression(args)};
-
-	-- Custom Function Type 2
-	else
-
-		local args = {};
-		for i, v in ipairs(shuffledIndices) do
-			table.insert(args, Ast.TableEntry(Ast.NumberExpression(v)));
-		end
-		for i, chunk in ipairs(shuffled) do
-			table.insert(args, Ast.TableEntry(Ast.StringExpression(chunk)));
-		end
-		return {Ast.TableConstructorExpression(args)};
+	local orderNodes = {};
+	local chunkNodes = {};
+	for i, v in ipairs(shuffledIndices) do
+		table.insert(orderNodes, Ast.TableEntry(Ast.NumberExpression(v)));
+	end
+	for i, chunk in ipairs(shuffled) do
+		table.insert(chunkNodes, Ast.TableEntry(Ast.StringExpression(chunk)));
 	end
 
+	if variant == 1 then
+		local args = {};
+		for _, node in ipairs(orderNodes) do
+			table.insert(args, node);
+		end
+		table.insert(args, Ast.TableEntry(Ast.TableConstructorExpression(chunkNodes)));
+		return {Ast.TableConstructorExpression(args)};
+	elseif variant == 2 then
+		local args = {};
+		for _, node in ipairs(orderNodes) do
+			table.insert(args, node);
+		end
+		for _, node in ipairs(chunkNodes) do
+			table.insert(args, node);
+		end
+		return {Ast.TableConstructorExpression(args)};
+	elseif variant == 3 then
+		return { Ast.TableConstructorExpression({
+			Ast.TableEntry(Ast.TableConstructorExpression(orderNodes)),
+			Ast.TableEntry(Ast.TableConstructorExpression(chunkNodes)),
+		}) };
+	else
+		local dummyEntries = {};
+		for i = 1, math.random(1, 3) do
+			table.insert(dummyEntries, Ast.TableEntry(Ast.StringExpression(randomStrings.randomString(math.random(3, 9)))));
+		end
+		return { Ast.TableConstructorExpression({
+			Ast.TableEntry(Ast.TableConstructorExpression(orderNodes)),
+			Ast.TableEntry(Ast.TableConstructorExpression(dummyEntries)),
+			Ast.TableEntry(Ast.TableConstructorExpression(chunkNodes)),
+		}) };
+	end
 end
 
 local function generateCustomFunctionLiteral(parentScope, variant)
@@ -170,48 +207,18 @@ local function generateCustomFunctionLiteral(parentScope, variant)
 		LuaVersion = LuaVersion.Lua51;
 	});
 
-	-- Custom Function Type 1
-	if variant == 1 then
-		local funcDeclNode = parser:parse(custom1Code).body.statements[1];
-		local funcBody = funcDeclNode.body;
-		local funcArgs = funcDeclNode.args;
-		funcBody.scope:setParent(parentScope);
-		return Ast.FunctionLiteralExpression(funcArgs, funcBody);
-
-		-- Custom Function Type 2
-	else
-		local funcDeclNode = parser:parse(custom2Code).body.statements[1];
-		local funcBody = funcDeclNode.body;
-		local funcArgs = funcDeclNode.args;
-		funcBody.scope:setParent(parentScope);
-		return Ast.FunctionLiteralExpression(funcArgs, funcBody);
-	end
+	local code = customCodes[variant] or customCodes[1];
+	local funcDeclNode = parser:parse(code).body.statements[1];
+	local funcBody = funcDeclNode.body;
+	local funcArgs = funcDeclNode.args;
+	funcBody.scope:setParent(parentScope);
+	return Ast.FunctionLiteralExpression(funcArgs, funcBody);
 end
 
 local function generateGlobalCustomFunctionDeclaration(ast, data)
-	local parser = Parser:new({
-		LuaVersion = LuaVersion.Lua51;
-	});
-
-	-- Custom Function Type 1
-	if data.customFunctionVariant == 1 then
-		local astScope = ast.body.scope;
-		local funcDeclNode = parser:parse(custom1Code).body.statements[1];
-		local funcBody = funcDeclNode.body;
-		local funcArgs = funcDeclNode.args;
-		funcBody.scope:setParent(astScope);
-		return Ast.LocalVariableDeclaration(astScope, {data.customFuncId},
-		{Ast.FunctionLiteralExpression(funcArgs, funcBody)});
-	-- Custom Function Type 2
-	else
-		local astScope = ast.body.scope;
-		local funcDeclNode = parser:parse(custom2Code).body.statements[1];
-		local funcBody = funcDeclNode.body;
-		local funcArgs = funcDeclNode.args;
-		funcBody.scope:setParent(astScope);
-		return Ast.LocalVariableDeclaration(data.customFuncScope, {data.customFuncId},
-		{Ast.FunctionLiteralExpression(funcArgs, funcBody)});
-	end
+	local astScope = ast.body.scope;
+	local literal = generateCustomFunctionLiteral(astScope, data.customFunctionVariant);
+	return Ast.LocalVariableDeclaration(data.customFuncScope, {data.customFuncId}, {literal});
 end
 
 function SplitStrings:variant()
