@@ -59,6 +59,14 @@ return {
 		PrettyPrint = false,
 		Seed = 0,
 		Steps = {
+			{
+				Name = "AntiDump",
+				Settings = {
+					Enabled = true,
+					EnvNoise = 40,
+					SpawnPoison = true,
+				},
+			},
 			{ Name = "EncryptStrings", Settings = {} },
 			{
 				Name = "AntiTamper",
@@ -79,6 +87,7 @@ return {
 					LocalWrapperArgCount = 8,
 					MaxWrapperOffset = 32767,
 					Encoding = "masked",
+					LazyDecode = true,
 				},
 			},
 			{
@@ -93,11 +102,10 @@ return {
 			{
 				Name = "SplitStrings",
 				Settings = {
-					Threshold = 0.72,
-					MinLength = 5,
-					MaxLength = 14,
-					ConcatenationType = "custom",
-					CustomFunctionType = "global",
+					Threshold = 0.45,
+					MinLength = 6,
+					MaxLength = 18,
+					ConcatenationType = "strcat",
 				},
 			},
 			{ Name = "WrapInFunction", Settings = {} },

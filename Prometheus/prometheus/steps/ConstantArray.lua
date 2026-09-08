@@ -94,6 +94,12 @@ ConstantArray.SettingsDescriptor = {
 			"base85",
 			"mixed",
 		},
+	},
+	LazyDecode = {
+		name = "LazyDecode",
+		description = "Keep masked strings encrypted in the constant array and decode only per access",
+		type = "boolean",
+		default = true,
 	}
 }
 
@@ -264,6 +270,13 @@ function ConstantArray:addRotateCode(ast, shift)
 end
 
 function ConstantArray:addDecodeCode(ast)
+	if self.Encoding == "masked" and self.LazyDecode then
+		-- Lazy masked mode intentionally does not decode the whole constant array at
+		-- startup. The wrapper decodes one value at a time, so dynamic memory dumps do
+		-- not get a single plaintext array after bootstrap.
+		return;
+	end
+
 	if self.Encoding == "masked" then
 		local maskedDecodeCode = [[
 	do ]] .. table.concat(util.shuffle{
@@ -679,6 +692,67 @@ function ConstantArray:createBase85Lookup()
 	return Ast.TableConstructorExpression(entries);
 end
 
+
+function ConstantArray:createLazyMaskedWrapperFunction()
+	local parser = Parser:new({
+		LuaVersion = LuaVersion.Lua51;
+	});
+
+	local decodedIndex = "((ARG / " .. numExpr(self.wrapperScale) .. ")";
+	if self.wrapperOffset < 0 then
+		decodedIndex = decodedIndex .. " - " .. numExpr(-self.wrapperOffset) .. ")";
+	else
+		decodedIndex = decodedIndex .. " + " .. numExpr(self.wrapperOffset) .. ")";
+	end
+
+	local wrapperCode = [[
+	local function WRAP(ARG)
+		local data = ARR[]] .. decodedIndex .. [[];
+		if type(data) ~= "string" then
+			return data;
+		end
+
+		local len = string.len;
+		local byte = string.byte;
+		local strchar = string.char;
+		local concat = table.concat;
+		local out = {};
+		local prev = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local step = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local gate = ((prev * 3 + step) % 251);
+		for j = 1, len(data) do
+			local encoded = byte(data, j);
+			local decoded = (encoded - prev) % 256;
+			if gate == 3001 then
+				decoded = (decoded + gate) % 256;
+			end
+			out[j] = strchar(decoded);
+			prev = (encoded + j + step) % 256;
+		end
+		return concat(out);
+	end
+	]];
+
+	local newAst = parser:parse(wrapperCode);
+	local funStat = newAst.body.statements[1];
+	funStat.scope = self.rootScope;
+	funStat.id = self.wrapperId;
+	funStat.body.scope:setParent(self.rootScope);
+
+	visitast(newAst, nil, function(node, data)
+		if(node.kind == AstKind.VariableExpression) then
+			if(node.scope:getVariableName(node.id) == "ARR") then
+				data.scope:removeReferenceToHigherScope(node.scope, node.id);
+				data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+				node.scope = self.rootScope;
+				node.id = self.arrId;
+			end
+		end
+	end)
+
+	return funStat;
+end
+
 function ConstantArray:encode(str)
 	if self.Encoding ~= "none" then
 		str = maskPayload(str, self.PayloadMaskKey, self.PayloadMaskStep);
@@ -935,6 +1009,14 @@ function ConstantArray:apply(ast, pipeline)
 	local steps = util.shuffle({
 		-- Add Wrapper Function Code
 		function()
+			if self.Encoding == "masked" and self.LazyDecode then
+				-- In lazy mode the array remains masked. The wrapper decodes only the
+				-- requested entry, which makes post-bootstrap memory dumps and simple
+				-- dynamic constant-array dumps much less useful.
+				table.insert(ast.body.statements, 1, self:createLazyMaskedWrapperFunction());
+				return;
+			end
+
 			local funcScope = Scope:new(self.rootScope);
 			-- Add Reference to Array
 			funcScope:addReferenceToHigherScope(self.rootScope, self.arrId);
