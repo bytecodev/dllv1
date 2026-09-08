@@ -86,9 +86,10 @@ ConstantArray.SettingsDescriptor = {
 		name = "Encoding",
 		description = "The Encoding to use for the Strings",
 		type = "enum",
-		default = "mixed",
+		default = "masked",
 		values = {
 			"none",
+			"masked",
 			"base64",
 			"base85",
 			"mixed",
@@ -123,6 +124,37 @@ local function maskPayload(str, key, step)
 		prev = (encoded + i + step) % 256;
 	end
 	return table.concat(out);
+end
+
+-- Emit small runtime constants as arithmetic expressions. This keeps key material
+-- out of the stable `local x = 123` shape that regex decoders usually target.
+local function numExpr(n)
+	if n == 0 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(k) .. "-" .. tostring(k) .. ")";
+	end
+
+	local style = math.random(1, 5);
+	if style == 1 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(n + k) .. "-" .. tostring(k) .. ")";
+	elseif style == 2 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(n - k) .. "+" .. tostring(k) .. ")";
+	elseif style == 3 then
+		local a = math.random(2, 31);
+		local q = math.floor(n / a);
+		local r = n - q * a;
+		return "((" .. tostring(q) .. "*" .. tostring(a) .. ")+" .. tostring(r) .. ")";
+	elseif style == 4 then
+		local a = math.random(9, 99);
+		local b = math.random(101, 999);
+		return "((" .. tostring(n + a + b) .. "-" .. tostring(a) .. ")-" .. tostring(b) .. ")";
+	else
+		local a = math.random(9, 99);
+		local b = math.random(101, 999);
+		return "((" .. tostring(n + a + b) .. ")-(" .. tostring(a) .. "+" .. tostring(b) .. "))";
+	end
 end
 
 function ConstantArray:init(_) end
@@ -232,7 +264,61 @@ function ConstantArray:addRotateCode(ast, shift)
 end
 
 function ConstantArray:addDecodeCode(ast)
-	if self.Encoding == "base64" then
+	if self.Encoding == "masked" then
+		local maskedDecodeCode = [[
+	do ]] .. table.concat(util.shuffle{
+		"local len = string.len;",
+		"local byte = string.byte;",
+		"local strchar = string.char;",
+		"local concat = table.concat;",
+		"local type = type;",
+		"local arr = ARR;",
+	}) .. [[
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local gate = ((maskKey * 3 + maskStep) % 251);
+		for i = 1, #arr do
+			local data = arr[i];
+			if type(data) == "string" then
+				local out = {};
+				local prev = maskKey;
+				local noise = (gate + i) % 17;
+				for j = 1, len(data) do
+					local encoded = byte(data, j);
+					local decoded = (encoded - prev) % 256;
+					if noise == 3001 then
+						decoded = (decoded + noise) % 256;
+					end
+					out[j] = strchar(decoded);
+					prev = (encoded + j + maskStep) % 256;
+				end
+				arr[i] = concat(out);
+			end
+		end
+	end
+]];
+
+		local parser = Parser:new({
+			LuaVersion = LuaVersion.Lua51;
+		});
+
+		local newAst = parser:parse(maskedDecodeCode);
+		local forStat = newAst.body.statements[1];
+		forStat.body.scope:setParent(ast.body.scope);
+
+		visitast(newAst, nil, function(node, data)
+			if(node.kind == AstKind.VariableExpression) then
+				if(node.scope:getVariableName(node.id) == "ARR") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+					node.scope = self.rootScope;
+					node.id = self.arrId;
+				end
+			end
+		end)
+
+		table.insert(ast.body.statements, 1, forStat);
+	elseif self.Encoding == "base64" then
 		local base64DecodeCode = [[
 	do ]] .. table.concat(util.shuffle{
 		"local lookup = LOOKUP_TABLE;",
@@ -246,8 +332,8 @@ function ConstantArray:addDecodeCode(ast)
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
-		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
-		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
 		local function unmask(data)
 			local out = {};
 			local prev = maskKey;
@@ -335,8 +421,8 @@ function ConstantArray:addDecodeCode(ast)
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
-		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
-		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
 		local function unmask(data)
 			local out = {};
 			local prev = maskKey;
@@ -439,8 +525,8 @@ function ConstantArray:addDecodeCode(ast)
 		"local type = type;",
 		"local arr = ARR;",
 	}) .. [[
-		local maskKey = ]] .. tostring(self.PayloadMaskKey) .. [[;
-		local maskStep = ]] .. tostring(self.PayloadMaskStep) .. [[;
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
 		local function unmask(data)
 			local out = {};
 			local prev = maskKey;
@@ -597,7 +683,14 @@ function ConstantArray:encode(str)
 	if self.Encoding ~= "none" then
 		str = maskPayload(str, self.PayloadMaskKey, self.PayloadMaskStep);
 	end
-	if self.Encoding == "base64" then
+	if self.Encoding == "none" then
+		return str;
+	elseif self.Encoding == "masked" then
+		-- Raw masked bytes are emitted as a Lua string literal. The unparser escapes
+		-- unsafe bytes as decimal escapes, so the output no longer has a base64/base85
+		-- surface (`==`, fixed 64-char alphabet, 5-byte base85 cadence, etc.).
+		return str;
+	elseif self.Encoding == "base64" then
 		return ((str:gsub('.', function(x)
 			local r,b='',x:byte()
 			for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end

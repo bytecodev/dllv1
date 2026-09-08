@@ -55,3 +55,8 @@ Opsi tambahan:
 - `seed`: seed acak agar hasil dapat direproduksi.
 
 Output dikirim kembali sebagai file `bytecode.lua`.
+
+
+## Medium hardened note
+
+Medium sekarang memakai `ConstantArray.Encoding = "masked"`, bukan base64/base85/mixed. Payload string disimpan sebagai byte-mask mentah yang di-escape oleh Lua unparser, lalu di-unmask saat runtime. Jadi hasil decode base64/base85 biasa tidak akan mengembalikan string asli.

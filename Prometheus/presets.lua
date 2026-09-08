@@ -78,7 +78,7 @@ return {
 					LocalWrapperCount = 0,
 					LocalWrapperArgCount = 8,
 					MaxWrapperOffset = 32767,
-					Encoding = "mixed",
+					Encoding = "masked",
 				},
 			},
 			{
