@@ -14,8 +14,12 @@ local binary = {
 }
 local unary = { NotExpression = "NOT", NegateExpression = "NEG", LenExpression = "LEN" }
 
-function C:new(luaVersion)
-    return setmetatable({protos = {}, constants = {}, slots = {}, nextSlot = 0, luaVersion = luaVersion or "LuaU"}, self)
+function C:new(luaVersion, options)
+    return setmetatable({
+        protos = {}, constants = {}, constantIds = {string={},number={},boolean={}},
+        slots = {}, nextSlot = 0, luaVersion = luaVersion or "LuaU",
+        options = options or {},
+    }, self)
 end
 
 function C:slot(scope, id)
@@ -34,9 +38,18 @@ function C:temp()
 end
 
 function C:constant(value)
-    -- Only the build process has this table. Runtime receives encrypted bytes.
+    -- Deduplicate at build time only. Runtime still decrypts on demand, without
+    -- retaining plaintext. Keep NaN and signed zero semantics out of table keys.
+    local kind=type(value)
+    if kind=="nil" and self.nilConstant then return self.nilConstant end
+    local ids=self.constantIds[kind]
+    local key=value
+    if kind=="number" and value==0 and 1/value<0 then key="negative-zero" end
+    if ids and value==value and ids[key] then return ids[key] end
     local id = #self.constants + 1
     self.constants[id] = {value = value}
+    if kind=="nil" then self.nilConstant=id
+    elseif ids and value==value then ids[key]=id end
     return id
 end
 
@@ -265,7 +278,7 @@ end
 
 function C:compile(ast)
     self:prototype({}, ast.body)
-    local source = Runtime.emit(self.protos, self.constants, self.luaVersion)
+    local source = Runtime.emit(self.protos, self.constants, self.luaVersion, self.options)
     return Parser:new({LuaVersion = "Lua51"}):parse(source)
 end
 

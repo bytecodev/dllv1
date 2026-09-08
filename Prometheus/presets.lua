@@ -59,7 +59,7 @@ return {
 		PrettyPrint = false,
 		Seed = 0,
 		Steps = {
-			{ Name = "Vmify", Settings = {} },
+			{ Name = "Vmify", Settings = { YieldEvery = 12000, NoiseRate = 16, FrameConstantCache = true } },
 		},
 	},
 	-- Strong obfuscation, high performance loss.

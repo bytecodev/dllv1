@@ -62,3 +62,30 @@ Output VM lebih besar dan lambat daripada source native. Angka stream besar meru
 Smoke tambahan Extreme (di luar suite rutin) menghasilkan 7 di Luau, tetapi outputnya 16.230.595 byte untuk `print(7)`, build sekitar 40 detik dan run pertama melewati timeout 5 detik. Eksekusi ulang tanpa batas 5 detik berhasil. Extreme belum mendapat matriks semantik penuh dan tidak layak dijadikan default.
 
 Untuk menutup penerimaan: pengguna menjalankan output Medium pada executor Roblox yang dimaksud dan mengirim log jika ada error. Pengguna telah menyatakan tidak ada runner/log executor yang dapat diakses saat ini. Tidak ada hasil game feature atau live executor yang disimpulkan hanya dari keberhasilan startup mock.
+
+## Diagnosis laporan freeze sebelum UI
+
+Pengguna kemudian melaporkan stuck/crash sebelum UI muncul. Diagnosis read-only terhadap runtime dan benchmark startup dilakukan dengan `node scripts/diagnose-vm.js`. Compiler/proteksi belum diubah dalam tahap diagnosis ini.
+
+File source asli sudah tidak berada di root ketika diagnosis dilakukan. Harness membaca source dari artefak startup sebelumnya dan memverifikasi SHA256-nya terhadap metadata build, tanpa mengembalikan atau mengubah file input pengguna. Output yang diukur memiliki SHA256 `b6024d071720117c9acfbe3226f6aedcfcc5597c08d83e083c4e1af3092ba2a7`.
+
+Scan `getgc(true)` berada sebelum pembuatan UI. Fixture mengganti `getgc` dengan koleksi 0, 1.000, atau 5.000 tabel; setiap tabel memiliki 13 field numerik/string-key dan setiap tabel ke-10 memiliki self-reference. Tidak ada object game, network atau callback input asli yang dijalankan. Semua enam proses selesai dengan exit 0 dan assert startup lulus.
+
+| Tabel pada mock getgc | Startup source | Startup Medium | Heap delta Medium pada akhir startup |
+| --- | --- | --- | --- |
+| 0 | 0,074 ms | 12,42 ms | 7.568 KB |
+| 1.000 | 1,31 ms | 960,98 ms | 9.952 KB |
+| 5.000 | 6,67 ms | 4.782,49 ms | 17.514 KB |
+
+Timing startup menggunakan `os.clock` di dalam script; tidak mencakup kompilasi. Heap delta adalah pembacaan `collectgarbage('count')` sesudah dikurangi sebelum startup, **bukan peak memory atau jumlah seluruh alokasi**. Wall time CLI Medium tercatat 499, 1.375, dan 5.257 ms; angka ini juga mencakup proses/parse/compile. Data dan log disimpan di `test-results/vm-diagnostic.json` dan `test-results/diagnostic.*.luau.log`.
+
+Bottleneck yang terlihat pada implementasi:
+
+- `run` membuat ulang dispatch table beserta seluruh handler closure pada setiap pemanggilan fungsi VM.
+- Setiap instruction mengalokasikan `words`; operasi scalar memakai table pack, dan beberapa varian operator menambah table operand sementara.
+- Constant nama global/member didekripsi ulang saat dipakai; scanner memperbanyak jalur lookup/type-check tersebut.
+- Scan awal tidak yield. Ukuran dan struktur koleksi getgc nyata belum diketahui.
+
+Luau menjelaskan hubungan antara tingkat alokasi dan beban garbage collection dalam [dokumentasi performanya](https://luau.org/performance/). Benchmark ini menunjukkan overhead startup yang nyata dan sesuai tahap freeze yang dilaporkan, tetapi tidak mereproduksi crash client atau membuktikan kehabisan memori.
+
+Prioritas optimasi berikutnya: bangun handler sekali per interpreter dengan frame terpisah per invocation; hilangkan alokasi decoder per instruction; kurangi table pack untuk jalur single-value sambil menjaga multi-return/nil/yield; profil scan getgc dan callback yang sering dipanggil. Numeric bytecode, opcode polymorphism dan lazy constant tanpa persistent plaintext pool tetap menjadi constraint. Perubahan scheduler/yield memerlukan perhatian khusus terhadap semantik callback dan coroutine.

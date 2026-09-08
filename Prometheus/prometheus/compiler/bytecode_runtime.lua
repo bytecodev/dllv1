@@ -9,7 +9,13 @@ local function shuffle(t)
 end
 local function array(t) return "{" .. table.concat(t, ",") .. "}" end
 
-function R.emit(protos, constants, luaVersion)
+function R.emit(protos, constants, luaVersion, options)
+    options = options or {}
+    local yieldEvery = tonumber(options.YieldEvery or options.yieldEvery) or 12000
+    if yieldEvery < 0 then yieldEvery = 0 end
+    local noiseRate = tonumber(options.NoiseRate or options.noiseRate) or 16
+    if noiseRate < 0 then noiseRate = 0 end
+    local frameConstantCache = options.FrameConstantCache ~= false and options.frameConstantCache ~= false
     local regMul, regAdd = math.random(3, 97), rand()
     local pcMul, pcAdd = math.random(3, 97), rand()
     local stackMul, stackAdd = math.random(3, 97), rand()
@@ -118,7 +124,7 @@ function R.emit(protos, constants, luaVersion)
         local code, locations = {}, {}
         for i, instruction in ipairs(p.code) do
             locations[i] = #code+1
-            if math.random(4)==1 then
+            if noiseRate > 0 and math.random(noiseRate)==1 then
                 code[#code+1] = {"NOISE"..math.random(noiseCount),rand(),rand(),rand()}
             end
             code[#code+1] = instruction
@@ -184,7 +190,17 @@ return (function(env,...)
     local pool=CONSTANTS
     local unpackValues=unpack or table.unpack
     local function pack(...) return {n=select('#',...),...} end
+    local nilSentinel={}
+    local activeConstantCache=nil
     local function constant(id)
+        local cache=activeConstantCache
+        if cache then
+            local cached=cache[id]
+            if cached~=nil then
+                if cached==nilSentinel then return nil end
+                return cached
+            end
+        end
         local entry=pool[id]; local bytes=entry[2]
         local state=(entry[1]+id*STRIDE+SALT)%2147483647
         local chars={}; local tag
@@ -194,21 +210,38 @@ return (function(env,...)
             state=(state+bytes[i])%2147483647
             if i==1 then tag=value else chars[i-1]=string.char(value) end
         end
-        local value=table.concat(chars)
+        local raw=table.concat(chars)
         for i=1,#chars do chars[i]=nil end
-        if tag==1 then return value end
-        if tag==2 then
-            if value=='inf' then return 1/0 end
-            if value=='-inf' then return -1/0 end
-            if value=='nan' or value=='-nan' then return 0/0 end
-            return tonumber(value)
-        end
-        if tag==3 then return true end
-        if tag==4 then return false end
-        return nil
+        local value
+        if tag==1 then value=raw
+        elseif tag==2 then
+            if raw=='inf' then value=1/0
+            elseif raw=='-inf' then value=-1/0
+            elseif raw=='nan' or raw=='-nan' then value=0/0
+            else value=tonumber(raw) end
+        elseif tag==3 then value=true
+        elseif tag==4 then value=false
+        else value=nil end
+        if cache then cache[id]=value==nil and nilSentinel or value end
+        return value
+    end
+    local taskApi=(env and rawget(env,'task')) or task
+    local waitFunc=type(taskApi)=='table' and taskApi.wait or nil
+    local coApi=(env and rawget(env,'coroutine')) or coroutine
+    local isYieldable=type(coApi)=='table' and coApi.isyieldable or nil
+    local yieldDisabled=false
+    local function safeYield()
+        if not waitFunc or yieldDisabled then return end
+        if isYieldable and not isYieldable() then return end
+        local ok=pcall(waitFunc)
+        if not ok then yieldDisabled=true end
     end
     local run
     run=function(id,captured,args)
+        local previousConstantCache=activeConstantCache
+        local frameConstantCacheEnabled=FRAMECONSTANTCACHE
+        local localConstantCache=frameConstantCacheEnabled and {} or nil
+        activeConstantCache=localConstantCache
         local proto=prototypes[id]; local stream=proto[1]
         local cells={}; for slot,cell in pairs(captured) do cells[slot]=cell end
         for i,slot in ipairs(proto[3]) do cells[slot]={args[i]} end
@@ -222,9 +255,14 @@ return (function(env,...)
         local drift=proto[2]%65521
         local position=PCMUL+PCADD+drift
         local status=LIVE; local result; local tailFunction,tailArgs; local noise=proto[2]%65521
+        local vmBudget=0
         local dispatch={}
         HANDLERS
         while status==LIVE do
+            if YIELDEVERY>0 then
+                vmBudget=vmBudget+1
+                if vmBudget>=YIELDEVERY then vmBudget=0; safeYield() end
+            end
             local index=(position-drift-PCADD)/PCMUL
             local offset=(index-1)*4
             local key=(proto[2]+index*STRIDE+SALT)%2147483647
@@ -243,14 +281,18 @@ return (function(env,...)
             for j=1,4 do words[j]=nil end
             handler(a,b,c)
         end
-        if status==TAIL then return tailFunction(unpackValues(tailArgs,1,tailArgs.n)) end
-        return unpackValues(result,1,result.n)
+        local finalStatus, finalResult, finalTailFunction, finalTailArgs = status, result, tailFunction, tailArgs
+        if localConstantCache then for k in pairs(localConstantCache) do localConstantCache[k]=nil end end
+        activeConstantCache=previousConstantCache
+        if finalStatus==TAIL then return finalTailFunction(unpackValues(finalTailArgs,1,finalTailArgs.n)) end
+        return unpackValues(finalResult,1,finalResult.n)
     end
     return run(1,{},pack(...))
 end)(getfenv and getfenv() or _ENV or _G,...)
 ]=]
     local replacements={PROTOTYPES=array(serialized),CONSTANTS=array(encrypted),STRIDE=stride,SALT=salt,
         PCMUL=pcMul,PCADD=pcAdd,STACKMUL=stackMul,STACKADD=stackAdd,LIVE=stateLive,DONE=stateDone,TAIL=stateTail,
+        YIELDEVERY=yieldEvery,FRAMECONSTANTCACHE=tostring(frameConstantCache),
         HANDLERS=table.concat(emittedHandlers,"\n")}
     -- One substitution pass, including DONE in inserted handler source.
     replacements.HANDLERS=replacements.HANDLERS:gsub("DONE",tostring(stateDone))
