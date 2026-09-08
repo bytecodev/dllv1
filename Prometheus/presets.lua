@@ -108,6 +108,14 @@ return {
 					ConcatenationType = "strcat",
 				},
 			},
+			{
+				Name = "GlobalProxy",
+				Settings = {
+					Enabled = true,
+					SetCurrentEnv = true,
+					DecoyCount = 14,
+				},
+			},
 			{ Name = "WrapInFunction", Settings = {} },
 		},
 	},
