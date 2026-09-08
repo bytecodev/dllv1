@@ -2,23 +2,22 @@
 --
 -- Vmify.lua
 --
--- This Script provides a Complex Obfuscation Step that will compile the entire Script to  a fully custom bytecode that does not share it's instructions
--- with lua, making it much harder to crack than other lua obfuscators
+-- Compile source AST into encrypted numeric instructions and a generated VM.
 
 local Step = require("prometheus.step");
-local Compiler = require("prometheus.compiler.compiler");
+local Compiler = require("prometheus.compiler.bytecode");
 
 local Vmify = Step:extend();
-Vmify.Description = "This Step will Compile your script into a fully-custom (not a half custom like other lua obfuscators) Bytecode Format and emit a vm for executing it.";
+Vmify.Description = "Compile source into encrypted numeric bytecode with randomized opcodes and a generated interpreter.";
 Vmify.Name = "Vmify";
 
 Vmify.SettingsDescriptor = {}
 
 function Vmify:init(_) end
 
-function Vmify:apply(ast)
+function Vmify:apply(ast, pipeline)
     -- Create Compiler
-	local compiler = Compiler:new();
+	local compiler = Compiler:new(pipeline and pipeline.LuaVersion);
 
     -- Compile the Script into a bytecode vm
     return compiler:compile(ast);

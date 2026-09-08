@@ -5,7 +5,7 @@
 local Prometheus = require("prometheus")
 local Pipeline = Prometheus.Pipeline
 
-local presetName = arg[1] or "Vmify"
+local presetName = arg[1] or "Medium"
 local samplePath = arg[2] or "sample.lua"
 
 local f = io.open(samplePath, "r")

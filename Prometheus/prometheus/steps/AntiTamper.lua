@@ -87,7 +87,9 @@ function AntiTamper:apply(ast, pipeline)
 		return ast
 	end
 	local code = generateSanityCheck()
-	if self.UseDebug then
+	-- Luau does not expose Lua 5.1 debug hooks/getinfo/string.dump. Explicit
+	-- Strong/Extreme presets must not emit calls to missing debug functions.
+	if self.UseDebug and pipeline.LuaVersion ~= Enums.LuaVersion.LuaU then
 		local string = RandomStrings.randomString()
 		code = code
 			.. [[

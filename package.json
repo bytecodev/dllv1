@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/index.js",
     "register": "node src/register-commands.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js",
+    "obfuscate": "node scripts/obfuscate.js"
   },
   "dependencies": {
     "discord.js": "^14.18.0",

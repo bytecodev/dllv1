@@ -75,9 +75,9 @@ function Pipeline:new(settings)
 end
 
 function Pipeline:fromConfig(config)
-	config = config or {};
+	config = config or require("presets").Medium;
 	local pipeline = Pipeline:new({
-		LuaVersion = config.LuaVersion or LuaVersion.Lua51;
+		LuaVersion = config.LuaVersion or LuaVersion.LuaU;
 		PrettyPrint = config.PrettyPrint or false;
 		VarNamePrefix = config.VarNamePrefix or "";
 		Seed = config.Seed or 0;
@@ -86,7 +86,7 @@ function Pipeline:fromConfig(config)
 	pipeline:setNameGenerator(config.NameGenerator or "MangledShuffled")
 
 	-- Add all Steps defined in Config
-	local steps = config.Steps or {};
+	local steps = config.Steps or require("presets").Medium.Steps;
 	for i, step in ipairs(steps) do
 		if type(step.Name) ~= "string" then
 			logger:error("Step.Name must be a String");

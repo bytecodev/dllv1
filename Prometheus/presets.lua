@@ -51,7 +51,7 @@ return {
 		},
 	},
 
-	-- Medium obfuscation. Moderate obfuscation, moderate performance loss.
+	-- Medium: numeric bytecode VM with lazy constants and executor-safe intrinsics.
 	["Medium"] = {
 		LuaVersion = "LuaU",
 		VarNamePrefix = "",
@@ -59,71 +59,9 @@ return {
 		PrettyPrint = false,
 		Seed = 0,
 		Steps = {
-			{
-				Name = "AntiDump",
-				Settings = {
-					Enabled = true,
-					EnvNoise = 40,
-					SpawnPoison = true,
-				},
-			},
-			{ Name = "EncryptStrings", Settings = {} },
-			{
-				Name = "AntiTamper",
-				Settings = {
-					UseDebug = false,
-				},
-			},
 			{ Name = "Vmify", Settings = {} },
-			{
-				Name = "ConstantArray",
-				Settings = {
-					Threshold = 1,
-					StringsOnly = true,
-					Shuffle = true,
-					Rotate = true,
-					LocalWrapperThreshold = 0,
-					LocalWrapperCount = 0,
-					LocalWrapperArgCount = 8,
-					MaxWrapperOffset = 32767,
-					Encoding = "masked",
-					LazyDecode = true,
-				},
-			},
-			{
-				Name = "NumbersToExpressions",
-				Settings = {
-					Threshold = 0.55,
-					InternalThreshold = 0.2,
-					NumberRepresentationMutation = true,
-					AllowedNumberRepresentations = { "hex", "normal" },
-				},
-			},
-			{
-				Name = "SplitStrings",
-				Settings = {
-					Threshold = 0.45,
-					MinLength = 6,
-					MaxLength = 18,
-					ConcatenationType = "strcat",
-				},
-			},
-			{
-				Name = "GlobalProxy",
-				Settings = {
-					Enabled = true,
-					-- Safe by default for Roblox executors. The proxy is emitted as a
-					-- Luraph-like setmetatable prologue, but Medium does not replace
-					-- the running function environment because several executors and
-					-- VM wrappers are sensitive to setfenv(1, proxy).
-					SetCurrentEnv = false,
-					DecoyCount = 14,
-				},
-			},
-			{ Name = "WrapInFunction", Settings = {} },
 		},
 	},
-
 	-- Strong obfuscation, high performance loss.
 	["Strong"] = {
 		LuaVersion = "Lua51",

@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { randomInt } = require("crypto");
 
 const {
   Client,
@@ -201,7 +202,7 @@ client.on("interactionCreate", async (interaction) => {
     const prettyPrint = interaction.options.getBoolean("pretty_print") ?? false;
     const seed =
       interaction.options.getInteger("seed") ??
-      Math.floor(Math.random() * 999999) + 1;
+      randomInt(1, 2147483647);
 
     if (!PRESETS.includes(preset)) {
       return interaction.editReply({
@@ -338,4 +339,3 @@ async function main() {
 }
 
 main().catch(console.error);
-

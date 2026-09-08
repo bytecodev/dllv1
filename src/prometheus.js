@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { toLuaLongString } = require("./luaString.js");
+const { randomInt } = require("crypto");
 
 // ─── Resolve paths ───────────────────────────────────────────────────────────
 const srcRoot = path.resolve(__dirname, "../Prometheus");
@@ -180,11 +181,22 @@ async function ensureWasmoonLoaded() {
  * @param {number} options.seed
  * @returns {Promise<{ok: boolean, output: string, error: string, logs: Array<{level: string, message: string}>}>}
  */
-async function runPrometheus(options) {
+async function runPrometheus(options = {}) {
   const logs = [];
   let lua = null;
 
   try {
+    options = {
+      ...options,
+      preset: !options.preset || options.preset === "Roblox" ? "Medium" : options.preset,
+      luaVersion: options.luaVersion ?? "LuaU",
+      filename: options.filename ?? "input.lua",
+      seed: options.seed ?? randomInt(1, 2147483647),
+    };
+    if (!PRESETS.includes(options.preset)) throw new Error("Invalid preset: " + options.preset);
+    if (!LUA_VERSIONS.includes(options.luaVersion)) throw new Error("Invalid Lua version: " + options.luaVersion);
+    if (typeof options.source !== "string") throw new Error("source must be a string");
+    if (!Number.isSafeInteger(options.seed) || options.seed < 1) throw new Error("seed must be a positive safe integer");
     await ensureWasmoonLoaded();
 
     const LuaFactory = luaFactoryModule.LuaFactory;

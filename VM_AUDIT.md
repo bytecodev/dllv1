@@ -1,0 +1,64 @@
+# Audit numeric VM — 2026-09-09
+
+Status: file `04_stealanegg.lua` sudah diterima dan berhasil diuji dengan Medium pada kompilasi Luau, static/binary dump scan, dan bounded startup mock. Pengujian executor Roblox asli akan dilakukan pengguna; belum ada hasil live yang diklaim.
+
+## Temuan dan perubahan
+
+- `Vmify` sebelumnya membangun AST blok dan threshold dispatcher. Sekarang ia memanggil compiler instruction tersendiri; emitter legacy hanya dipertahankan untuk kompatibilitas internal dan regresi.
+- Medium sekarang hanya memakai `Vmify` numerik, kemudian rename/minify bawaan pipeline. Lapisan AntiDump, EncryptStrings, AntiTamper, ConstantArray dan GlobalProxy tidak lagi menjadi dasar Medium.
+- Setiap function menjadi prototype dengan flat stream empat word terenkripsi per instruction. Runtime membaca/dekripsi satu instruction, menjalankan handler generik, lalu membuang buffer instruction tersebut. Tidak ada handler berisi blok source.
+- Opcode map, dua alias per operasi, permutasi operand, bentuk handler, tag state, encoding register/stack/PC, key, serta decoy berbeda antar-seed. PC memiliki offset berubah per instruction. Runtime tidak menyimpan daftar opcode semantik sebagai string.
+- Register/cell **alamatnya** encoded; nilai object/function dan nilai program aktif tetap native agar identitas object, metamethod dan host API terjaga. Ini tidak mengklaim semua nilai hidup selalu terenkripsi di memori.
+- Constant/string pool tetap terenkripsi. Tidak ada cache plaintext permanen. Decoder dipanggil saat CONST/GLOBAL/METHOD/GREF dijalankan; temporary character buffer dan slot stack yang dikonsumsi dibersihkan. Closure hanya menangkap cell yang dirujuknya.
+- Return/argument pack menyimpan jumlah hasil eksplisit, termasuk nil akhir. Compiler menangani closure, recursion/tail call, short circuit, multi-assignment, table, loop, Luau continue/compound/if expression, serta ordinary generalized table iteration.
+- Commit multi-assignment mengikuti target: Lua51 dari kanan ke kiri; LuaU dari kiri ke kanan. RHS dan target indexing dievaluasi sebelum commit.
+- Intrinsic global/member/method mengambil nama dari pool. Method dipanggil dengan object asli sebagai self. Medium tidak memerlukan debug dan tidak memanggil setfenv. Guard debug legacy Strong/Extreme dinonaktifkan saat target LuaU.
+- `src/bytecode.js` sebelumnya menunjuk folder engine yang tidak tersedia; sekarang menjadi alias `src/prometheus.js`. API, bot, CLI dan harness memakai default Medium + LuaU; preset Roblox lama dialihkan ke Medium pada API/bot.
+- `emit.lua` pada checkout awal sudah memakai compact array, begitu juga `createBlock`. Regresi 20 build mengawasi array tepat sebelum table.sort dan memverifikasi comparator tidak menerima nil. Tidak perlu menambahkan mapping ID ke sequence tersebut.
+
+## Bukti pengujian
+
+Perintah utama: `npm test`. Node 24.18.0; compiler dan differential Lua dijalankan melalui Wasmoon (Lua 5.4). Runtime Luau memakai executable resmi 0.737. SHA256 arsip `luau-windows.zip`: `8cd28be648f3e5cc4bfc977d2344e43540ade5f3524440b171eecf54d3a4fb7c`.
+
+Hasil run terbaru setelah file target diterima: **22 tests, 21 passed, 0 failed, 1 skipped**, exit code 0, sekitar 24,3 detik. Skip tersisa adalah eksekusi dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan sudah dijalankan. Log `test-results/final-test-results.txt` adalah run sebelumnya (17 passed/2 skipped), bukan run terbaru. `git diff --check` dan syntax check Node untuk entrypoint juga lulus pada audit awal.
+
+| Pemeriksaan | Bukti |
+| --- | --- |
+| Smoke VM | `return 1+2` menghasilkan 3 |
+| Differential Lua | Semantics fixture sama pada seed 1, 42, 987654; termasuk nil/vararg, upvalue, metamethod, assignment, loop, pcall dan coroutine yield/resume |
+| Sample repository | sample.lua, sample2.lua, sample3.lua sama dengan source |
+| CLI/default pipeline | Default API/pipeline Medium + LuaU; CLI mengobfuscate sample.lua dan hasil Luau sama |
+| Preset eksplisit | Minify, Weak, Strong menjalankan print(7) di Luau dengan debug=nil; Strong + LuaU juga menghasilkan output sama dengan source pada fixture Roblox berisi RemoteEvent/RemoteFunction, task, typeof, pcall dan getgenv |
+| Luau native | Semantics, Luau syntax, dan mock Roblox sama pada 3 seed; 9 pasangan eksekusi |
+| Lazy pool | Branch belum dijalankan tidak mendekripsi constant; traversal upvalue closure setelah pemanggilan tidak menemukan plaintext constant/cache |
+| Tail call dan byte string | Rekursi tail 2.000 langkah, method tail call, UTF-8 dan byte NUL/255/128 lulus differential |
+| Legacy sort | 20 build dengan randomized sparse block IDs; block sequence tetap compact dan comparator tidak menerima nil |
+| Stream besar | 350 branch; source 17.306 byte menjadi output 392.833 byte; output sama di Luau |
+| Static output dan Lua binary dump | Tidak ada game:GetService, ReplicatedStorage, HttpGet, RemoteEvent, RemoteFunction, AskWearStill, CodexUI |
+| Disassembly Luau | Baseline mengekspos 7 nama penting; dump VM mengekspos 0. Ukuran dump 2.526 -> 121.962 byte. GetService diperiksa tersendiri karena NAMECALL memisahkannya dari global game |
+| 04_stealanegg.lua Medium | Build, kompilasi Luau native, static scan dan binary dump scan lulus. Source dan output memiliki startup trace identik pada local UI loader dan mock HTTP fallback; Config tab juga dibangun |
+| Roblox executor live / Instance asli | **Belum diuji**: tes memakai Luau CLI dan mock API, bukan Roblox client |
+
+Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblox.simple-dump.luac`, disassembly `roblox.luau-disassembly.txt`, `dump-metrics.json`, `size-metrics.json`, dan pasangan source/output untuk tes native. Artefak dan executable tidak masuk git.
+
+### File target yang diterima
+
+- Source: 309.966 byte, SHA256 `0aee51e4ad8e29e13e1a35f3d1eb586eceb4de9c5d51a6ce0c6aaeeceb18d47b`.
+- Output `test-results/04_stealanegg.medium.lua`: 2.905.652 byte, Medium + LuaU, seed 42, build sekitar 22,5 detik pada run suite terbaru.
+- SHA256 output: `b6024d071720117c9acfbe3226f6aedcfcc5597c08d83e083c4e1af3092ba2a7`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
+- Native Luau binary tanpa debug info: 4.881.291 byte. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
+- Startup fixture menghasilkan `STARTUP_OK instances=6 tabs=7 configBuilds=1 pendingJobs=1` untuk source maupun output, pada kedua cabang loader. HTTP mengembalikan mock UI lokal; tidak ada download/jaringan nyata.
+- Satu job animasi dijalankan sampai yield pertama. Game feature tab, interaction/input callbacks, getgc terhadap object game, __namecall hooks, respawn dan fitur teleport belum diuji. Semua feature tab tetap lazy; hanya Config yang dibangun dalam tes tambahan.
+- File target ini belum dibangun/diuji memakai Strong. Bukti Strong adalah fixture kecil yang terpisah; jangan menganggap kelulusan fixture tersebut sebagai kelulusan seluruh file target di executor.
+
+## Batas yang masih berlaku
+
+Keystream aritmetika dan key tertanam membuat ini obfuscation yang reversibel oleh analis yang menguasai runtime, bukan encryption dengan secret eksternal. Hasil scan/disassembly membuktikan hilangnya pola/source constant pada dump sederhana tersebut; belum ada pembuktian ketahanan terhadap devirtualizer atau instrumentasi instruction/API.
+
+Front end masih parser Prometheus yang ada, bukan seluruh grammar Luau terbaru. Type declarations/casts dan fitur syntax lain di luar parser belum termasuk cakupan tes. Mock Instance memverifikasi self dan lookup, tetapi tidak memverifikasi engine Roblox, executor-specific APIs, __namecall hooks, protected __iter metatables, atau semua jenis userdata.
+
+Output VM lebih besar dan lambat daripada source native. Angka stream besar merupakan satu fixture, bukan benchmark umum atau batas kapasitas input. Preset berlapis Strong/Extreme jauh lebih mahal; Medium tetap default utama.
+
+Smoke tambahan Extreme (di luar suite rutin) menghasilkan 7 di Luau, tetapi outputnya 16.230.595 byte untuk `print(7)`, build sekitar 40 detik dan run pertama melewati timeout 5 detik. Eksekusi ulang tanpa batas 5 detik berhasil. Extreme belum mendapat matriks semantik penuh dan tidak layak dijadikan default.
+
+Untuk menutup penerimaan: pengguna menjalankan output Medium pada executor Roblox yang dimaksud dan mengirim log jika ada error. Pengguna telah menyatakan tidak ada runner/log executor yang dapat diakses saat ini. Tidak ada hasil game feature atau live executor yang disimpulkan hanya dari keberhasilan startup mock.
