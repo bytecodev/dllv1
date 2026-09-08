@@ -202,8 +202,10 @@ return function(Compiler)
             end
 
             local block = { id = id, index = i, block = Ast.Block(blockstats, block.scope) }
+            -- Keep `blocks` as a compact sequence only. Block IDs are intentionally
+            -- sparse/randomized; using blocks[id] creates numeric holes, and Lua's
+            -- table.sort may then pass nil entries into the comparator.
             table.insert(blocks, block);
-            blocks[id] = block;
         end
 
         table.sort(blocks, function(a, b) return a.id < b.id end);

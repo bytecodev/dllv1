@@ -112,7 +112,11 @@ return {
 				Name = "GlobalProxy",
 				Settings = {
 					Enabled = true,
-					SetCurrentEnv = true,
+					-- Safe by default for Roblox executors. The proxy is emitted as a
+					-- Luraph-like setmetatable prologue, but Medium does not replace
+					-- the running function environment because several executors and
+					-- VM wrappers are sensitive to setfenv(1, proxy).
+					SetCurrentEnv = false,
 					DecoyCount = 14,
 				},
 			},
