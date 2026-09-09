@@ -57,6 +57,7 @@ return {
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
 		PrettyPrint = false,
+		NumberFormat = "MixedHex",
 		Seed = 0,
 		Steps = {
 			{ Name = "Vmify", Settings = { YieldEvery = 0, YieldInterval = 0.035, NoiseRate = 96, FrameConstantCache = true, InstructionCache = true, IntegrityStep = 257, VerifyOnce = true, TraceGuardEvery = 0, HandlerWrapperNoise = false } },

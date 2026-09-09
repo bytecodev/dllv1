@@ -42,6 +42,7 @@ function Unparser:new(settings)
 		notIdentPattern = "[^" .. table.concat(conventions.IdentChars, "") .. "]";
 		numberPattern = "^[" .. table.concat(conventions.NumberChars, "") .. "]";
 		highlight = settings and settings.Highlight or false;
+		numberFormat = settings and settings.NumberFormat or "Decimal";
 		keywordsLookup = lookupify(conventions.Keywords);
 	}
 
@@ -416,6 +417,18 @@ function Unparser:unparseExpression(expression, tabbing)
 		end
 		if(str:sub(1, 2) == "0.") then
 			str = str:sub(2);
+		end
+		-- Hex literals are decoded by the Luau parser and have no runtime cost.
+		-- Only exact, non-negative 31-bit integers are rewritten so Lua 5.1 and
+		-- Luau retain identical number semantics. Random padding adds build-level
+		-- spelling diversity without introducing arithmetic-expression overhead.
+		if(self.numberFormat == "MixedHex" and expression.value >= 0 and
+			expression.value <= 2147483647 and expression.value % 1 == 0 and
+			math.random(1, 4) ~= 1) then
+			local hex = string.format("%X", expression.value)
+			local padding = math.random(1, 16) == 1 and "0" or ""
+			local candidate = "0x" .. padding .. hex
+			if(#candidate <= #str) then return candidate end
 		end
 		return str;
 	end

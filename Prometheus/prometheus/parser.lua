@@ -140,6 +140,164 @@ local function expect(self, kind, source)
 	end
 end
 
+local function tokenWord(token)
+	if(token.kind == TokenKind.Ident) then return token.value or token.source end
+	if(token.kind == TokenKind.Keyword) then return token.source end
+	return nil
+end
+
+local function isWord(self, word, n)
+	return tokenWord(peek(self, n)) == word
+end
+
+local function expectTypeClose(self)
+	if(consume(self, TokenKind.Symbol, ">")) then return end
+	-- In `local x: Box<T>={}`, the context-free tokenizer sees `>=`.
+	-- Consume the type close logically and leave the assignment token behind.
+	if(is(self, TokenKind.Symbol, ">=")) then
+		local token=peek(self)
+		token.source="="; token.value="="; token.startPos=token.startPos+1
+		return
+	end
+	expect(self, TokenKind.Symbol, ">")
+end
+
+-- Luau types are erased before the executable AST reaches the VM. These
+-- routines still parse their structure instead of scanning to a newline;
+-- comments/newlines are not tokens, so delimiter-based skipping would merge
+-- adjacent statements and silently change programs.
+function Parser:typeGenericParameters(scope)
+	expect(self, TokenKind.Symbol, "<")
+	if(consume(self, TokenKind.Symbol, ">")) then return end
+	repeat
+		expect(self, TokenKind.Ident)
+		consume(self, TokenKind.Symbol, "...")
+		if(consume(self, TokenKind.Symbol, "=")) then self:typeAnnotation(scope) end
+	until not consume(self, TokenKind.Symbol, ",")
+	expectTypeClose(self)
+end
+
+function Parser:typeParenthesized(scope)
+	expect(self, TokenKind.Symbol, "(")
+	if(not consume(self, TokenKind.Symbol, ")")) then
+		repeat
+			if(is(self, TokenKind.Ident) and is(self, TokenKind.Symbol, ":", 1)) then
+				get(self); get(self)
+			elseif(consume(self, TokenKind.Symbol, "...")) then
+				consume(self, TokenKind.Symbol, ":")
+			end
+			self:typeAnnotation(scope)
+		until not consume(self, TokenKind.Symbol, ",")
+		expect(self, TokenKind.Symbol, ")")
+	end
+	if(consume(self, TokenKind.Symbol, "->")) then self:typeAnnotation(scope) end
+end
+
+function Parser:typeTable(scope)
+	expect(self, TokenKind.Symbol, "{")
+	while(not consume(self, TokenKind.Symbol, "}")) do
+		-- `read` and `write` are contextual access modifiers in modern Luau
+		-- table types. Keep `{read: T}` and `{write: T}` as ordinary fields.
+		if((isWord(self, "read") or isWord(self, "write")) and
+			not is(self, TokenKind.Symbol, ":", 1)) then
+			get(self)
+		end
+		if(consume(self, TokenKind.Symbol, "[")) then
+			self:typeAnnotation(scope)
+			expect(self, TokenKind.Symbol, "]")
+			expect(self, TokenKind.Symbol, ":")
+			self:typeAnnotation(scope)
+		elseif((is(self, TokenKind.Ident) or is(self, TokenKind.String)) and is(self, TokenKind.Symbol, ":", 1)) then
+			get(self); get(self); self:typeAnnotation(scope)
+		else
+			self:typeAnnotation(scope)
+		end
+		if(not consume(self, TokenKind.Symbol, ",") and not consume(self, TokenKind.Symbol, ";") and
+			not is(self, TokenKind.Symbol, "}")) then
+			expect(self, TokenKind.Symbol, "}")
+			return
+		end
+	end
+end
+
+function Parser:typePrimary(scope)
+	if(is(self, TokenKind.Symbol, "<")) then
+		self:typeGenericParameters(scope)
+		self:typePrimary(scope)
+	elseif(is(self, TokenKind.Symbol, "(")) then
+		self:typeParenthesized(scope)
+	elseif(is(self, TokenKind.Symbol, "{")) then
+		self:typeTable(scope)
+	elseif(consume(self, TokenKind.Symbol, "...")) then
+		self:typePrimary(scope)
+	elseif(isWord(self, "typeof") and is(self, TokenKind.Symbol, "(", 1)) then
+		get(self); get(self)
+		local depth=1
+		while(depth>0) do
+			if(is(self, TokenKind.Eof)) then expect(self, TokenKind.Symbol, ")") end
+			if(consume(self, TokenKind.Symbol, "(")) then depth=depth+1
+			elseif(consume(self, TokenKind.Symbol, ")")) then depth=depth-1
+			else get(self) end
+		end
+	elseif(is(self, TokenKind.Ident) or is(self, TokenKind.Keyword) or is(self, TokenKind.String) or is(self, TokenKind.Number)) then
+		get(self)
+		while(consume(self, TokenKind.Symbol, ".")) do expect(self, TokenKind.Ident) end
+		if(consume(self, TokenKind.Symbol, "<")) then
+			if(not is(self, TokenKind.Symbol, ">") and not is(self, TokenKind.Symbol, ">=")) then
+				repeat self:typeAnnotation(scope) until not consume(self, TokenKind.Symbol, ",")
+			end
+			expectTypeClose(self)
+		end
+	else
+		expect(self, TokenKind.Ident)
+	end
+	while(consume(self, TokenKind.Symbol, "?") or consume(self, TokenKind.Symbol, "...")) do end
+end
+
+function Parser:typeIntersection(scope)
+	consume(self, TokenKind.Symbol, "&")
+	self:typePrimary(scope)
+	while(consume(self, TokenKind.Symbol, "&")) do self:typePrimary(scope) end
+end
+
+function Parser:typeAnnotation(scope)
+	consume(self, TokenKind.Symbol, "|")
+	self:typeIntersection(scope)
+	while(consume(self, TokenKind.Symbol, "|")) do self:typeIntersection(scope) end
+end
+
+function Parser:typeAlias(scope, exported)
+	if(exported) then
+		expect(self, TokenKind.Ident) -- export
+		expect(self, TokenKind.Ident) -- type
+	else
+		expect(self, TokenKind.Ident) -- type
+	end
+	expect(self, TokenKind.Ident)
+	if(is(self, TokenKind.Symbol, "<")) then self:typeGenericParameters(scope) end
+	expect(self, TokenKind.Symbol, "=")
+	self:typeAnnotation(scope)
+	return Ast.NopStatement()
+end
+
+function Parser:typeFunction(scope, exported)
+	if(exported) then expect(self, TokenKind.Ident) end -- export
+	expect(self, TokenKind.Ident) -- type
+	expect(self, TokenKind.Keyword, "function")
+	expect(self, TokenKind.Ident)
+
+	-- Type-function bodies run during analysis, never in the program runtime.
+	-- Parse them with an isolated scope so syntax is validated without adding
+	-- their globals or locals to the executable chunk.
+	local functionScope=Scope:new(Scope:newGlobal())
+	expect(self, TokenKind.Symbol, "(")
+	self:functionArgList(functionScope)
+	expect(self, TokenKind.Symbol, ")")
+	self:block(nil, false, functionScope)
+	expect(self, TokenKind.Keyword, "end")
+	return Ast.NopStatement()
+end
+
 -- Parse the given code to an Abstract Syntax Tree
 function Parser:parse(code)
 	self.tokenizer:append(code);
@@ -186,6 +344,24 @@ function Parser:statement(scope, currentLoop)
 	-- NOP statements are therefore ignored
 	while(consume(self, TokenKind.Symbol, ";")) do
 
+	end
+
+	-- `type` and `export type` are contextual Luau statements. Type-only
+	-- declarations do not produce runtime code.
+	if(self.luaVersion == LuaVersion.LuaU and isWord(self, "type") and
+		is(self, TokenKind.Keyword, "function", 1)) then
+		return self:typeFunction(scope, false)
+	end
+	if(self.luaVersion == LuaVersion.LuaU and isWord(self, "export") and isWord(self, "type", 1) and
+		is(self, TokenKind.Keyword, "function", 2)) then
+		return self:typeFunction(scope, true)
+	end
+	if(self.luaVersion == LuaVersion.LuaU and isWord(self, "type") and peek(self, 1).kind == TokenKind.Ident) then
+		return self:typeAlias(scope, false)
+	end
+	if(self.luaVersion == LuaVersion.LuaU and isWord(self, "export") and isWord(self, "type", 1) and
+		peek(self, 2).kind == TokenKind.Ident) then
+		return self:typeAlias(scope, true)
 	end
 
 	-- Break Statement - only valid inside of Loops
@@ -284,10 +460,16 @@ function Parser:statement(scope, currentLoop)
 		local indices = obj.indices;
 
 		local funcScope = Scope:new(scope);
+		if(self.luaVersion == LuaVersion.LuaU and is(self, TokenKind.Symbol, "<")) then
+			self:typeGenericParameters(funcScope)
+		end
 
 		expect(self, TokenKind.Symbol, "(");
 		local args = self:functionArgList(funcScope);
 		expect(self, TokenKind.Symbol, ")");
+		if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+			self:typeAnnotation(funcScope)
+		end
 
 		if(obj.passSelf) then
 			local id = funcScope:addVariable("self", obj.token);
@@ -309,10 +491,16 @@ function Parser:statement(scope, currentLoop)
 
 			local id = scope:addVariable(name, ident);
 			local funcScope = Scope:new(scope);
+			if(self.luaVersion == LuaVersion.LuaU and is(self, TokenKind.Symbol, "<")) then
+				self:typeGenericParameters(funcScope)
+			end
 
 			expect(self, TokenKind.Symbol, "(");
 			local args = self:functionArgList(funcScope);
 			expect(self, TokenKind.Symbol, ")");
+			if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+				self:typeAnnotation(funcScope)
+			end
 
 			local body = self:block(nil, false, funcScope);
 			expect(self, TokenKind.Keyword, "end");
@@ -341,14 +529,15 @@ function Parser:statement(scope, currentLoop)
 
 	-- For Statement
 	if(consume(self, TokenKind.Keyword, "for")) then
+		local forScope = Scope:new(scope);
+		local ident = expect(self, TokenKind.Ident);
+		local varId = forScope:addDisabledVariable(ident.value, ident);
+		if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+			self:typeAnnotation(forScope)
+		end
+
 		-- Normal for Statement
-		if(is(self, TokenKind.Symbol, "=", 1)) then
-			local forScope = Scope:new(scope);
-
-			local ident = expect(self, TokenKind.Ident);
-			local varId = forScope:addDisabledVariable(ident.value, ident);
-
-			expect(self, TokenKind.Symbol, "=");
+		if(consume(self, TokenKind.Symbol, "=")) then
 			local initialValue = self:expression(scope);
 
 			expect(self, TokenKind.Symbol, ",");
@@ -367,9 +556,15 @@ function Parser:statement(scope, currentLoop)
 		end
 
 		-- For ... in ... statement
-		local forScope = Scope:new(scope);
-
-		local ids = self:nameList(forScope);
+		local ids = {varId};
+		while(consume(self, TokenKind.Symbol, ",")) do
+			ident = expect(self, TokenKind.Ident)
+			local id = forScope:addDisabledVariable(ident.value, ident)
+			table.insert(ids, id)
+			if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+				self:typeAnnotation(forScope)
+			end
+		end
 		expect(self, TokenKind.Keyword, "in");
 		local expressions = self:exprList(scope);
 		-- Enable Ids after Expression Parsing so that code like this works:
@@ -518,11 +713,17 @@ function Parser:nameList(scope)
 	local ident = expect(self, TokenKind.Ident);
 	local id = scope:addDisabledVariable(ident.value, ident);
 	table.insert(ids, id);
+	if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+		self:typeAnnotation(scope)
+	end
 
 	while(consume(self, TokenKind.Symbol, ",")) do
 		ident = expect(self, TokenKind.Ident);
 		id = scope:addDisabledVariable(ident.value, ident);
 		table.insert(ids, id);
+		if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+			self:typeAnnotation(scope)
+		end
 	end
 
 	return ids;
@@ -713,7 +914,7 @@ function Parser:expressionUnary(scope)
 end
 
 function Parser:expressionPow(scope)
-	local lhs = self:tableOrFunctionLiteral(scope);
+	local lhs = self:expressionTypeAssertion(scope);
 
 	if(consume(self, TokenKind.Symbol, "^")) then
 		-- Allow unary operators on the rhs (e.g. 2 ^ #x, 2 ^ -x) while preserving right-associativity. ~ SpinnySpiwal
@@ -722,6 +923,17 @@ function Parser:expressionPow(scope)
 	end
 
 	return lhs;
+end
+
+function Parser:expressionTypeAssertion(scope)
+	local value=self:tableOrFunctionLiteral(scope)
+	while(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, "::")) do
+		self:typeAnnotation(scope)
+		-- A Luau type assertion collapses a multi-return expression to its first
+		-- value. Reuse the existing single-result marker after erasing the type.
+		value.isParenthesizedExpression=true
+	end
+	return value
 end
 
 -- Table Literals and Function Literals cannot directly be called or indexed
@@ -742,10 +954,16 @@ function Parser:expressionFunctionLiteral(parentScope)
 	local scope = Scope:new(parentScope);
 
 	expect(self, TokenKind.Keyword, "function");
+	if(self.luaVersion == LuaVersion.LuaU and is(self, TokenKind.Symbol, "<")) then
+		self:typeGenericParameters(scope)
+	end
 
 	expect(self, TokenKind.Symbol, "(");
 	local args = self:functionArgList(scope);
 	expect(self, TokenKind.Symbol, ")");
+	if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+		self:typeAnnotation(scope)
+	end
 
 	local body = self:block(nil, false, scope);
 	expect(self, TokenKind.Keyword, "end");
@@ -756,6 +974,9 @@ end
 function Parser:functionArgList(scope)
 	local args = {};
 	if(consume(self, TokenKind.Symbol, "...")) then
+		if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+			self:typeAnnotation(scope)
+		end
 		table.insert(args, Ast.VarargExpression());
 		return args;
 	end
@@ -766,18 +987,27 @@ function Parser:functionArgList(scope)
 
 		local id = scope:addVariable(name, ident);
 		table.insert(args, Ast.VariableExpression(scope, id));
+		if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+			self:typeAnnotation(scope)
+		end
 
 		while(consume(self, TokenKind.Symbol, ",")) do
 			if(consume(self, TokenKind.Symbol, "...")) then
+				if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+					self:typeAnnotation(scope)
+				end
 				table.insert(args, Ast.VarargExpression());
 				return args;
 			end
 
-			ident = get(self);
+			ident = expect(self, TokenKind.Ident);
 			name = ident.value;
 
 			id = scope:addVariable(name, ident);
 			table.insert(args, Ast.VariableExpression(scope, id));
+			if(self.luaVersion == LuaVersion.LuaU and consume(self, TokenKind.Symbol, ":")) then
+				self:typeAnnotation(scope)
+			end
 		end
 	end
 
@@ -789,6 +1019,18 @@ function Parser:expressionFunctionCall(scope, base)
 
 	if(not (base and (CALLABLE_PREFIX_EXPRESSION_LOOKUP[base.kind] or base.isParenthesizedExpression))) then
 		return base;
+	end
+
+	-- Explicit generic instantiation uses two angle brackets so it remains
+	-- distinguishable from comparison syntax: functionName<<Type>>(value).
+	if(self.luaVersion == LuaVersion.LuaU and is(self, TokenKind.Symbol, "<") and
+		is(self, TokenKind.Symbol, "<", 1)) then
+		get(self); get(self)
+		if(not consume(self, TokenKind.Symbol, ">")) then
+			repeat self:typeAnnotation(scope) until not consume(self, TokenKind.Symbol, ",")
+			expectTypeClose(self)
+		end
+		expect(self, TokenKind.Symbol, ">")
 	end
 
 	-- Normal Function Call

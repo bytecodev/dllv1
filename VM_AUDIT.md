@@ -20,7 +20,7 @@ Status: file `04_stealanegg.lua` berhasil diuji dengan Medium pada kompilasi Lua
 
 Perintah utama: `npm test`. Node 24.18.0; compiler dan differential Lua dijalankan melalui Wasmoon (Lua 5.4). Runtime Luau memakai executable resmi 0.737. SHA256 arsip `luau-windows.zip`: `8cd28be648f3e5cc4bfc977d2344e43540ade5f3524440b171eecf54d3a4fb7c`.
 
-Hasil run terbaru setelah optimasi startup dan penambahan corpus umum: **24 tests, 23 passed, 0 failed, 1 skipped**, exit code 0, sekitar 38,5 detik. Skip tersisa adalah eksekusi otomatis dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan dan laporan live pengguna sudah tersedia. `git diff --check` juga lulus.
+Hasil run terbaru setelah pembaruan parser typed Luau dan emitter `MixedHex`: **26 tests, 25 passed, 0 failed, 1 skipped**, exit code 0, sekitar 66,3 detik. Skip tersisa adalah eksekusi otomatis dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan dan laporan live pengguna sudah tersedia. `git diff --check` juga lulus.
 
 | Pemeriksaan | Bukti |
 | --- | --- |
@@ -30,6 +30,7 @@ Hasil run terbaru setelah optimasi startup dan penambahan corpus umum: **24 test
 | CLI/default pipeline | Default API/pipeline Medium + LuaU; CLI mengobfuscate sample.lua dan hasil Luau sama |
 | Preset eksplisit | Minify, Weak, Strong menjalankan print(7) di Luau dengan debug=nil; Strong + LuaU juga menghasilkan output sama dengan source pada fixture Roblox berisi RemoteEvent/RemoteFunction, task, typeof, pcall dan getgenv |
 | Luau native | Semantics, Luau syntax, dan mock Roblox sama pada 3 seed; 9 pasangan eksekusi |
+| Typed Luau | Alias/type function, anotasi, generic/type pack, union/intersection/optional, table/function/qualified/typeof type, read/write property, cast, dan generic instantiation lulus differential pada 3 seed; identifier type-only tidak bocor ke output |
 | Lazy pool | Branch belum dijalankan tidak mendekripsi constant; traversal upvalue closure setelah pemanggilan tidak menemukan plaintext constant/cache |
 | Tail call dan byte string | Rekursi tail 2.000 langkah, method tail call, UTF-8 dan byte NUL/255/128 lulus differential |
 | Legacy sort | 20 build dengan randomized sparse block IDs; block sequence tetap compact dan comparator tidak menerima nil |
@@ -44,8 +45,9 @@ Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblo
 ### File target yang diterima
 
 - Source: 309.966 byte, SHA256 `0aee51e4ad8e29e13e1a35f3d1eb586eceb4de9c5d51a6ce0c6aaeeceb18d47b`.
-- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.793 byte, Medium + LuaU, seed 42, build sekitar 13,4 detik pada full suite terakhir.
-- SHA256 output terbaru: `e04dd8f95a7fc2012b7b6800d6e821c68b29f78d08cd332359bae30bd07fa2bf`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
+- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.793 byte, Medium + LuaU, seed 42, build sekitar 17,6 detik pada full suite paralel terakhir.
+- SHA256 output terbaru: `53672b31d6879b173b8f785ddc16af7ce388ee5a42f3457512535cdcee0a5a55`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
+- Emitter `MixedHex` menghasilkan 76.141 literal `0x...` pada output target tanpa mengubah jumlah byte dibanding keluaran desimal sebelumnya. Hex merupakan variasi lexical dan tidak diklaim sebagai penghambat dynamic dump.
 - Native Luau binary tanpa debug info berhasil dibuat. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
 - Startup fixture menghasilkan `STARTUP_OK instances=6 tabs=7 configBuilds=1 pendingJobs=1` untuk source maupun output, pada kedua cabang loader. HTTP mengembalikan mock UI lokal; tidak ada download/jaringan nyata.
 - Satu job animasi dijalankan sampai yield pertama. Game feature tab, interaction/input callbacks, getgc terhadap object game, __namecall hooks, respawn dan fitur teleport belum diuji. Semua feature tab tetap lazy; hanya Config yang dibangun dalam tes tambahan.
@@ -55,13 +57,19 @@ Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblo
 
 Keystream aritmetika dan key tertanam membuat ini obfuscation yang reversibel oleh analis yang menguasai runtime, bukan encryption dengan secret eksternal. Hasil scan/disassembly membuktikan hilangnya pola/source constant pada dump sederhana tersebut; belum ada pembuktian ketahanan terhadap devirtualizer atau instrumentasi instruction/API.
 
-Front end masih parser Prometheus yang ada, bukan seluruh grammar Luau terbaru. Type declarations/casts dan fitur syntax lain di luar parser belum termasuk cakupan tes. Mock Instance memverifikasi self dan lookup, tetapi tidak memverifikasi engine Roblox, executor-specific APIs, __namecall hooks, protected __iter metatables, atau semua jenis userdata.
+Front end Prometheus sekarang mem-parse lalu menghapus syntax tipe Luau sebelum kompilasi VM: alias dan type function, anotasi binding/fungsi/loop, generic/type pack, bentuk type utama, access modifier, cast, dan generic instantiation masuk regression test. Parser ini bukan type checker dan belum mencakup seluruh grammar runtime Luau terbaru; function attributes, deklarasi `const`, dan interpolated backtick strings masih belum didukung. Mock Instance memverifikasi self dan lookup, tetapi tidak memverifikasi engine Roblox, executor-specific APIs, __namecall hooks, protected __iter metatables, atau semua jenis userdata.
 
 Output VM lebih besar dan lambat daripada source native. Angka stream besar merupakan satu fixture, bukan benchmark umum atau batas kapasitas input. Preset berlapis Strong/Extreme jauh lebih mahal; Medium tetap default utama.
 
 Smoke tambahan Extreme (di luar suite rutin) menghasilkan 7 di Luau, tetapi outputnya 16.230.595 byte untuk `print(7)`, build sekitar 40 detik dan run pertama melewati timeout 5 detik. Eksekusi ulang tanpa batas 5 detik berhasil. Extreme belum mendapat matriks semantik penuh dan tidak layak dijadikan default.
 
 Pengguna sudah menjalankan output Medium pada executor Roblox dan melaporkan hasil tanpa kendala. Karena tidak ada runner/log executor yang dapat diakses dari workspace, laporan tersebut dicatat sebagai validasi pengguna dan tidak menggantikan regression suite otomatis.
+
+### Audit dump dinamis yang diberikan pengguna
+
+`168d7f178546dc3a.lua` berukuran 14.016 byte/617 baris. File itu berisi 11 panggilan `game:GetService`, satu `HttpGet`, dan bagian bootstrap UI, tetapi tidak berisi `RemoteEvent`, `RemoteFunction`, atau `AskWearStill`. Lima callback/Build menjadi function kosong dan tiga jalur berhenti pada penanda `infinitelooperror`. Bukti ini konsisten dengan trace eksekusi parsial: dumper merekam nilai dan host call yang benar-benar dipakai, bukan memperoleh kembali seluruh source asli.
+
+VM dapat menyembunyikan constant dan struktur program dari static/simple bytecode dump, tetapi host call beserta argumennya harus tersedia saat program berjalan. Dumper yang mengendalikan executor dapat merekam nilai tersebut setelah lazy decryption. Mengganti desimal menjadi hex, menambah string simbol acak, atau menambah pemeriksaan API executor tidak dapat membuat client-side code mustahil didump; pemeriksaan seperti itu juga mudah dipalsukan dan berisiko memblokir executor yang sah.
 
 ## Diagnosis laporan freeze sebelum UI
 
@@ -106,7 +114,7 @@ Build final berkurang dari 2.905.652 menjadi sekitar 2.007.793 byte (sekitar 30,
 | 1.000 | 890,70 ms | 309,32 ms | 10.580 KB | 9.511 KB |
 | 5.000 | 4.610,77 ms | 1.567,65 ms | 15.819 KB | 11.066 KB |
 
-Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Setelah optimasi, full suite tetap **21 pass, 0 fail, 1 skip**, startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
+Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Setelah pembaruan parser, full suite menjadi **25 pass, 0 fail, 1 skip**; startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
 
 `04_stealanegg.lua` masih melakukan crawl `getgc(true)` sebelum membuat UI. Waktu bagian ini bertambah mengikuti jumlah object/table pada client, jadi VM yang lebih cepat mengurangi stall tetapi tidak dapat membuat scan tanpa batas menjadi konstan. Jika koleksi executor jauh lebih besar daripada fixture, pemindahan scan ke sesudah UI atau pemrosesan batch perlu dilakukan pada source aplikasi agar UI selalu muncul lebih dahulu.
 

@@ -34,6 +34,7 @@ local Pipeline = {
 		PrettyPrint = false; -- Note that Pretty Print is currently not producing Pretty results
 		Seed = 0; -- The Seed. 0 or below uses the current time as a seed
 		VarNamePrefix = ""; -- The Prefix that every variable will start with
+		NumberFormat = "Decimal"; -- Decimal or MixedHex integer literal spelling
 	}
 }
 
@@ -49,12 +50,14 @@ function Pipeline:new(settings)
 	local prettyPrint = settings.PrettyPrint or Pipeline.DefaultSettings.PrettyPrint;
 	local prefix = settings.VarNamePrefix or Pipeline.DefaultSettings.VarNamePrefix;
 	local seed = settings.Seed or 0;
+	local numberFormat = settings.NumberFormat or Pipeline.DefaultSettings.NumberFormat;
 
 	local pipeline = {
 		LuaVersion = luaVersion;
 		PrettyPrint = prettyPrint;
 		VarNamePrefix = prefix;
 		Seed = seed;
+		NumberFormat = numberFormat;
 		parser = Parser:new({
 			LuaVersion = luaVersion;
 		});
@@ -62,6 +65,7 @@ function Pipeline:new(settings)
 			LuaVersion = luaVersion;
 			PrettyPrint = prettyPrint;
 			Highlight = settings.Highlight;
+			NumberFormat = numberFormat;
 		});
 		namegenerator = Pipeline.NameGenerators.MangledShuffled;
 		conventions = conventions;
@@ -81,6 +85,7 @@ function Pipeline:fromConfig(config)
 		PrettyPrint = config.PrettyPrint or false;
 		VarNamePrefix = config.VarNamePrefix or "";
 		Seed = config.Seed or 0;
+		NumberFormat = config.NumberFormat or Pipeline.DefaultSettings.NumberFormat;
 	});
 
 	pipeline:setNameGenerator(config.NameGenerator or "MangledShuffled")
@@ -134,6 +139,8 @@ function Pipeline:setLuaVersion(luaVersion)
 	});
 	self.unparser = Unparser:new({
 		LuaVersion = luaVersion;
+		PrettyPrint = self.PrettyPrint;
+		NumberFormat = self.NumberFormat;
 	});
 	self.conventions = conventions;
 end
