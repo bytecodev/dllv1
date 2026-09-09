@@ -77,21 +77,50 @@ function C:variable(scope, id, ref)
 end
 
 function C:list(nodes)
-    for _, node in ipairs(nodes) do self:expr(node) end
+    for i, node in ipairs(nodes) do self:expr(node, i == #nodes) end
     self:emit("PACK", #nodes)
 end
 
-function C:call(n, tail)
+local function fixedArgumentCount(args)
+    local count=#args
+    if count>3 then return nil end
+    local last=args[count]
+    if not last or last.isParenthesizedExpression then return count end
+    if last.kind=="VarargExpression" or last.kind=="FunctionCallExpression" or
+        last.kind=="PassSelfFunctionCallExpression" then return nil end
+    return count
+end
+
+function C:call(n, tail, returnMode)
+    local fixedCount=not tail and returnMode~=nil and fixedArgumentCount(n.args) or nil
+    if fixedCount then
+        if n.kind == "PassSelfFunctionCallExpression" or n.kind == "PassSelfFunctionCallStatement" then
+            self:expr(n.base)
+            for _,arg in ipairs(n.args) do self:expr(arg) end
+            self:emit(returnMode==0 and "MCALL0" or "MCALL1", self:constant(n.passSelfFunctionName), fixedCount)
+        elseif n.base.kind=="VariableExpression" and n.base.scope.isGlobal then
+            for _,arg in ipairs(n.args) do self:expr(arg) end
+            self:emit(returnMode==0 and "GCALL0" or "GCALL1",
+                self:constant(n.base.scope:getVariableName(n.base.id)), fixedCount)
+        else
+            self:expr(n.base)
+            for _,arg in ipairs(n.args) do self:expr(arg) end
+            self:emit(returnMode==0 and "FCALL0" or "FCALL1", fixedCount)
+        end
+        return
+    end
     self:expr(n.base)
     if n.kind == "PassSelfFunctionCallExpression" or n.kind == "PassSelfFunctionCallStatement" then
         self:emit("METHOD", self:constant(n.passSelfFunctionName))
-        self:list(n.args); self:emit(tail and "TAILSELF" or "SELFCALL")
+        self:list(n.args)
+        self:emit(tail and "TAILSELF" or returnMode == 0 and "SELF0" or returnMode == 1 and "SELF1" or "SELFCALL")
     else
-        self:list(n.args); self:emit(tail and "TAILCALL" or "CALL")
+        self:list(n.args)
+        self:emit(tail and "TAILCALL" or returnMode == 0 and "CALL0" or returnMode == 1 and "CALL1" or "CALL")
     end
 end
 
-function C:expr(n)
+function C:expr(n, wantMulti)
     local k = n.kind
     if k == "NilExpression" or k == "BooleanExpression" or k == "NumberExpression" or k == "StringExpression" then
         self:emit("CONST", self:constant(n.value))
@@ -108,9 +137,13 @@ function C:expr(n)
     elseif k == "IndexExpression" then
         self:expr(n.base); self:expr(n.index); self:emit("INDEX")
     elseif k == "FunctionCallExpression" or k == "FunctionCallStatement" then
-        self:call(n)
+        local returnMode=1
+        if wantMulti and not n.isParenthesizedExpression then returnMode=nil end
+        self:call(n, false, returnMode)
     elseif k == "PassSelfFunctionCallExpression" or k == "PassSelfFunctionCallStatement" then
-        self:call(n)
+        local returnMode=1
+        if wantMulti and not n.isParenthesizedExpression then returnMode=nil end
+        self:call(n, false, returnMode)
     elseif k == "FunctionLiteralExpression" then
         self:emit("CLOSURE", self:prototype(n.args, n.body))
     elseif k == "TableConstructorExpression" then
@@ -120,7 +153,7 @@ function C:expr(n)
             if entry.kind == "KeyedTableEntry" then
                 self:expr(entry.key); self:expr(entry.value); self:emit("FIELD")
             else
-                self:expr(entry.value); self:emit("APPEND", index, i == #n.entries and 1 or 0)
+                self:expr(entry.value, i == #n.entries); self:emit("APPEND", index, i == #n.entries and 1 or 0)
                 index = index + 1
             end
         end
@@ -178,7 +211,7 @@ function C:statement(n)
         self:reference(n.lhs); self:emit("DUP"); self:emit("DEREF")
         self:expr(n.rhs); self:emit(ops[k]); self:emit("ASSIGN", 1)
     elseif k == "FunctionCallStatement" or k == "PassSelfFunctionCallStatement" then
-        self:expr(n); self:emit("DROP")
+        self:call(n, false, 0)
     elseif k == "ReturnStatement" then
         local value=n.args[1]
         if #n.args==1 and not value.isParenthesizedExpression and

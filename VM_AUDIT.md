@@ -20,7 +20,7 @@ Status: file `04_stealanegg.lua` sudah diterima dan berhasil diuji dengan Medium
 
 Perintah utama: `npm test`. Node 24.18.0; compiler dan differential Lua dijalankan melalui Wasmoon (Lua 5.4). Runtime Luau memakai executable resmi 0.737. SHA256 arsip `luau-windows.zip`: `8cd28be648f3e5cc4bfc977d2344e43540ade5f3524440b171eecf54d3a4fb7c`.
 
-Hasil run terbaru setelah file target diterima: **22 tests, 21 passed, 0 failed, 1 skipped**, exit code 0, sekitar 24,3 detik. Skip tersisa adalah eksekusi dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan sudah dijalankan. Log `test-results/final-test-results.txt` adalah run sebelumnya (17 passed/2 skipped), bukan run terbaru. `git diff --check` dan syntax check Node untuk entrypoint juga lulus pada audit awal.
+Hasil run terbaru setelah optimasi startup: **22 tests, 21 passed, 0 failed, 1 skipped**, exit code 0, sekitar 37,9 detik. Skip tersisa adalah eksekusi dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan sudah dijalankan. `git diff --check` juga lulus.
 
 | Pemeriksaan | Bukti |
 | --- | --- |
@@ -44,9 +44,9 @@ Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblo
 ### File target yang diterima
 
 - Source: 309.966 byte, SHA256 `0aee51e4ad8e29e13e1a35f3d1eb586eceb4de9c5d51a6ce0c6aaeeceb18d47b`.
-- Output `test-results/04_stealanegg.medium.lua`: 2.905.652 byte, Medium + LuaU, seed 42, build sekitar 22,5 detik pada run suite terbaru.
-- SHA256 output: `b6024d071720117c9acfbe3226f6aedcfcc5597c08d83e083c4e1af3092ba2a7`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
-- Native Luau binary tanpa debug info: 4.881.291 byte. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
+- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.539 byte, Medium + LuaU, seed 42, build sekitar 14,0 detik pada full suite terakhir.
+- SHA256 output terbaru: `e6ff4afbf3da24a1cf4a402ccb129fdee9781077d958eb6161066f214751e657`. Metadata otomatis ada di `test-results/04_stealanegg.build.json` dan `test-results/04_stealanegg.optimized.build.json`.
+- Native Luau binary tanpa debug info berhasil dibuat. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
 - Startup fixture menghasilkan `STARTUP_OK instances=6 tabs=7 configBuilds=1 pendingJobs=1` untuk source maupun output, pada kedua cabang loader. HTTP mengembalikan mock UI lokal; tidak ada download/jaringan nyata.
 - Satu job animasi dijalankan sampai yield pertama. Game feature tab, interaction/input callbacks, getgc terhadap object game, __namecall hooks, respawn dan fitur teleport belum diuji. Semua feature tab tetap lazy; hanya Config yang dibangun dalam tes tambahan.
 - File target ini belum dibangun/diuji memakai Strong. Bukti Strong adalah fixture kecil yang terpisah; jangan menganggap kelulusan fixture tersebut sebagai kelulusan seluruh file target di executor.
@@ -89,3 +89,23 @@ Bottleneck yang terlihat pada implementasi:
 Luau menjelaskan hubungan antara tingkat alokasi dan beban garbage collection dalam [dokumentasi performanya](https://luau.org/performance/). Benchmark ini menunjukkan overhead startup yang nyata dan sesuai tahap freeze yang dilaporkan, tetapi tidak mereproduksi crash client atau membuktikan kehabisan memori.
 
 Prioritas optimasi berikutnya: bangun handler sekali per interpreter dengan frame terpisah per invocation; hilangkan alokasi decoder per instruction; kurangi table pack untuk jalur single-value sambil menjaga multi-return/nil/yield; profil scan getgc dan callback yang sering dipanggil. Numeric bytecode, opcode polymorphism dan lazy constant tanpa persistent plaintext pool tetap menjadi constraint. Perubahan scheduler/yield memerlukan perhatian khusus terhadap semantik callback dan coroutine.
+
+## Hasil perbaikan freeze startup
+
+Prioritas di atas sudah diterapkan. Dispatch dan handler polymorphic sekarang dibangun satu kali per interpreter dan menerima frame eksplisit, sehingga pemanggilan closure VM berulang tidak lagi membangun ulang seluruh handler table. Constant cache dipindahkan ke frame agar aman terhadap re-entry/coroutine dan dibersihkan saat invocation selesai. Constant yang sama dideduplikasi saat build, tetapi pool runtime tetap encrypted dan plaintext hanya didekripsi secara lazy.
+
+Stack scalar tidak lagi membungkus setiap nilai dalam packet table. Packet hanya dipakai ketika semantik multi-return/vararg memang membutuhkannya. Call yang hasilnya dibuang atau hanya mengambil satu nilai memakai opcode terpisah. Call global, local function, dan method dengan nol sampai tiga argumen memakai intrinsic fixed-arity, sehingga tidak membuat argument packet dan lookup nama global/method tetap terjadi di dalam VM. Perubahan ini juga mempertahankan trailing nil dan multi-return pada jalur umum.
+
+Auto-yield Medium dinonaktifkan (`YieldEvery = 0`). Uji Luau CLI menemukan bahwa yield dari entry thread tertentu dapat berhenti dengan `thread yielded unexpectedly`; `pcall(task.wait)` tidak menjamin kasus itu dapat dipulihkan. Yield tetap tersedia sebagai opsi eksplisit, tetapi bukan mekanisme pencegah freeze default.
+
+Build final berkurang dari 2.905.652 menjadi 2.007.539 byte (sekitar 30,9%). Pada fixture `getgc` yang sama, hasil akhir adalah:
+
+| Tabel pada mock getgc | Medium sebelum | Medium sesudah | Heap delta sebelum | Heap delta sesudah |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 14,55 ms | 6,62 ms | 7.568 KB | 4.033 KB |
+| 1.000 | 890,70 ms | 309,32 ms | 10.580 KB | 9.511 KB |
+| 5.000 | 4.610,77 ms | 1.567,65 ms | 15.819 KB | 11.066 KB |
+
+Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Setelah optimasi, full suite tetap **21 pass, 0 fail, 1 skip**, startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
+
+`04_stealanegg.lua` masih melakukan crawl `getgc(true)` sebelum membuat UI. Waktu bagian ini bertambah mengikuti jumlah object/table pada client, jadi VM yang lebih cepat mengurangi stall tetapi tidak dapat membuat scan tanpa batas menjadi konstan. Jika koleksi executor jauh lebih besar daripada fixture, pemindahan scan ke sesudah UI atau pemrosesan batch perlu dilakukan pada source aplikasi agar UI selalu muncul lebih dahulu.

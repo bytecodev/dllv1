@@ -25,7 +25,7 @@ end
 
 function R.emit(protos, constants, luaVersion, options)
     options = options or {}
-    local yieldEvery = tonumber(options.YieldEvery or options.yieldEvery) or 12000
+    local yieldEvery = tonumber(options.YieldEvery or options.yieldEvery) or 0
     if yieldEvery < 0 then yieldEvery = 0 end
     local noiseRate = tonumber(options.NoiseRate or options.noiseRate) or 96
     if noiseRate < 0 then noiseRate = 0 end
@@ -55,127 +55,162 @@ function R.emit(protos, constants, luaVersion, options)
 
     local handlers = {
         CONST = {
-            "push(pack(constant(a)))",
-            "local v=constant(a); push(pack(v))",
-            "do local id=a; local v=constant(id); push(pack(v)) end",
+            "pushOne(constant(a))",
+            "local v=constant(a); pushOne(v)",
+            "do local id=a; local v=constant(id); pushOne(v) end",
         },
         GLOBAL = {
-            "push(pack(env[constant(a)]))",
-            "local k=constant(a); push(pack(env[k]))",
-            "do local k=constant(a); local v=env[k]; push(pack(v)) end",
+            "pushOne(env[constant(a)])",
+            "local k=constant(a); pushOne(env[k])",
+            "do local k=constant(a); local v=env[k]; pushOne(v) end",
         },
         GREF = {
-            "push(pack({env,constant(a)}))",
-            "local k=constant(a); push(pack({env,k}))",
+            "pushOne({env,constant(a)})",
+            "local k=constant(a); pushOne({env,k})",
         },
         GET = {
-            "push(pack(cells[a][1]))",
-            "local cell=cells[a]; push(pack(cell[1]))",
-            "do local slot=a; push(pack(cells[slot][1])) end",
+            "pushOne(cells[a][1])",
+            "local cell=cells[a]; pushOne(cell[1])",
+            "do local slot=a; pushOne(cells[slot][1]) end",
         },
         REF = {
-            "push(pack({cells[a],1}))",
-            "local cell=cells[a]; push(pack({cell,1}))",
+            "pushOne({cells[a],1})",
+            "local cell=cells[a]; pushOne({cell,1})",
         },
         NEW = {
-            "cells[a]={peek()[b]}",
-            "local values=peek(); cells[a]={values[b]}",
+            "cells[a]={peekAt(b)}",
+            "local value=peekAt(b); cells[a]={value}",
         },
         INDEX = {
-            "local key=pop()[1]; local obj=pop()[1]; push(pack(obj[key]))",
-            "local rk=pop(); local ro=pop(); push(pack(ro[1][rk[1]]))",
-            "do local key=pop()[1]; local obj=pop()[1]; local v=obj[key]; push(pack(v)) end",
+            "local key=popOne(); local obj=popOne(); pushOne(obj[key])",
+            "local key=popOne(); local obj=popOne(); local value=obj[key]; pushOne(value)",
+            "do local key=popOne(); local obj=popOne(); local v=obj[key]; pushOne(v) end",
         },
         INDEXREF = {
-            "local key=pop()[1]; local obj=pop()[1]; push(pack({obj,key}))",
-            "local rk=pop(); local ro=pop(); push(pack({ro[1],rk[1]}))",
+            "local key=popOne(); local obj=popOne(); pushOne({obj,key})",
+            "local key=popOne(); local obj=popOne(); local ref={obj,key}; pushOne(ref)",
         },
         DEREF = {
-            "local ref=pop()[1]; push(pack(ref[1][ref[2]]))",
-            "local ref=pop()[1]; local obj,key=ref[1],ref[2]; push(pack(obj[key]))",
+            "local ref=popOne(); pushOne(ref[1][ref[2]])",
+            "local ref=popOne(); local obj,key=ref[1],ref[2]; pushOne(obj[key])",
         },
-        ASSIGN = {[=[local values=pop(); local refs={}
-            for i=a,1,-1 do refs[i]=pop()[1] end
+        ASSIGN = {[=[local values=popPacket(); local refs={}
+            for i=a,1,-1 do refs[i]=popOne() end
             for i=1,a do local ref=refs[i]; ref[1][ref[2]]=values[i]; refs[i]=nil end]=]},
         VARARG = {
-            "push(varargs)",
-            "local v=varargs; push(v)",
+            "pushPacket(varargs)",
+            "local v=varargs; pushPacket(v)",
         },
         SINGLE = {
-            "local v=pop()[1]; push(pack(v))",
-            "local values=pop(); push(pack(values[1]))",
+            "local v=popOne(); pushOne(v)",
+            "local value=popOne(); pushOne(value)",
         },
         DUP = {
-            "push(peek())",
-            "local v=peek(); push(v)",
+            "duplicate()",
+            "do duplicate() end",
         },
         DROP = {
-            "pop()",
-            "local _=pop()",
+            "drop()",
+            "do drop() end",
         },
-        PACK = {[=[local parts={}; for i=a,1,-1 do parts[i]=pop() end
-            local values={n=0}; for i=1,a do
-                local part=parts[i]; local count=1; if i==a then count=part.n end
-                for j=1,count do values.n=values.n+1; values[values.n]=part[j] end
-                parts[i]=nil
-            end; push(values)]=]},
+        PACK = {"packStack(a)"},
         CALL = {
-            "local args=pop(); local fn=pop()[1]; push(pack(fn(unpackValues(args,1,args.n))))",
-            "local aPack=pop(); local callee=pop()[1]; push(pack(callee(unpackValues(aPack,1,aPack.n))))",
+            "local args=popPacket(); local fn=popOne(); pushPacket(pack(fn(unpackValues(args,1,args.n))))",
+            "local args=popPacket(); local callee=popOne(); pushPacket(pack(callee(unpackValues(args,1,args.n))))",
         },
+        CALL1 = {
+            "local args=popPacket(); local fn=popOne(); pushOne(fn(unpackValues(args,1,args.n)))",
+            "local args=popPacket(); local callee=popOne(); local value=callee(unpackValues(args,1,args.n)); pushOne(value)",
+        },
+        CALL0 = {
+            "local args=popPacket(); local fn=popOne(); fn(unpackValues(args,1,args.n))",
+            "local args=popPacket(); local callee=popOne(); callee(unpackValues(args,1,args.n))",
+        },
+        FCALL1 = {[=[local x1,x2,x3
+            if a>=3 then x3=popOne() end; if a>=2 then x2=popOne() end; if a>=1 then x1=popOne() end
+            local fn=popOne()
+            if a==0 then pushOne(fn()) elseif a==1 then pushOne(fn(x1)) elseif a==2 then pushOne(fn(x1,x2)) else pushOne(fn(x1,x2,x3)) end]=]},
+        FCALL0 = {[=[local x1,x2,x3
+            if a>=3 then x3=popOne() end; if a>=2 then x2=popOne() end; if a>=1 then x1=popOne() end
+            local fn=popOne()
+            if a==0 then fn() elseif a==1 then fn(x1) elseif a==2 then fn(x1,x2) else fn(x1,x2,x3) end]=]},
+        GCALL1 = {[=[local x1,x2,x3
+            if b>=3 then x3=popOne() end; if b>=2 then x2=popOne() end; if b>=1 then x1=popOne() end
+            local fn=env[constant(a)]
+            if b==0 then pushOne(fn()) elseif b==1 then pushOne(fn(x1)) elseif b==2 then pushOne(fn(x1,x2)) else pushOne(fn(x1,x2,x3)) end]=]},
+        GCALL0 = {[=[local x1,x2,x3
+            if b>=3 then x3=popOne() end; if b>=2 then x2=popOne() end; if b>=1 then x1=popOne() end
+            local fn=env[constant(a)]
+            if b==0 then fn() elseif b==1 then fn(x1) elseif b==2 then fn(x1,x2) else fn(x1,x2,x3) end]=]},
         METHOD = {
-            "local obj=pop()[1]; local fn=obj[constant(a)]; push(pack(fn)); push(pack(obj))",
-            "local obj=pop()[1]; local key=constant(a); push(pack(obj[key])); push(pack(obj))",
+            "local obj=popOne(); local fn=obj[constant(a)]; pushOne(fn); pushOne(obj)",
+            "local obj=popOne(); local key=constant(a); pushOne(obj[key]); pushOne(obj)",
         },
         SELFCALL = {
-            "local args=pop(); local obj=pop()[1]; local fn=pop()[1]; push(pack(fn(obj,unpackValues(args,1,args.n))))",
-            "local argv=pop(); local selfObj=pop()[1]; local fn=pop()[1]; push(pack(fn(selfObj,unpackValues(argv,1,argv.n))))",
+            "local args=popPacket(); local obj=popOne(); local fn=popOne(); pushPacket(pack(fn(obj,unpackValues(args,1,args.n))))",
+            "local args=popPacket(); local selfObj=popOne(); local fn=popOne(); pushPacket(pack(fn(selfObj,unpackValues(args,1,args.n))))",
         },
+        SELF1 = {
+            "local args=popPacket(); local obj=popOne(); local fn=popOne(); pushOne(fn(obj,unpackValues(args,1,args.n)))",
+            "local args=popPacket(); local selfObj=popOne(); local fn=popOne(); local value=fn(selfObj,unpackValues(args,1,args.n)); pushOne(value)",
+        },
+        SELF0 = {
+            "local args=popPacket(); local obj=popOne(); local fn=popOne(); fn(obj,unpackValues(args,1,args.n))",
+            "local args=popPacket(); local selfObj=popOne(); local fn=popOne(); fn(selfObj,unpackValues(args,1,args.n))",
+        },
+        MCALL1 = {[=[local x1,x2,x3
+            if b>=3 then x3=popOne() end; if b>=2 then x2=popOne() end; if b>=1 then x1=popOne() end
+            local obj=popOne(); local fn=obj[constant(a)]
+            if b==0 then pushOne(fn(obj)) elseif b==1 then pushOne(fn(obj,x1)) elseif b==2 then pushOne(fn(obj,x1,x2)) else pushOne(fn(obj,x1,x2,x3)) end]=]},
+        MCALL0 = {[=[local x1,x2,x3
+            if b>=3 then x3=popOne() end; if b>=2 then x2=popOne() end; if b>=1 then x1=popOne() end
+            local obj=popOne(); local fn=obj[constant(a)]
+            if b==0 then fn(obj) elseif b==1 then fn(obj,x1) elseif b==2 then fn(obj,x1,x2) else fn(obj,x1,x2,x3) end]=]},
         TAILCALL = {
-            "tailArgs=pop(); tailFunction=pop()[1]; status=TAIL",
-            "local aPack=pop(); tailFunction=pop()[1]; tailArgs=aPack; status=TAIL",
+            "tailArgs=popPacket(); tailFunction=popOne(); status=TAIL",
+            "local args=popPacket(); tailFunction=popOne(); tailArgs=args; status=TAIL",
         },
-        TAILSELF = {[=[local args=pop(); local obj=pop()[1]; tailFunction=pop()[1]; tailArgs={n=args.n+1,obj}; for i=1,args.n do tailArgs[i+1]=args[i] end; status=TAIL]=]},
+        TAILSELF = {[=[local args=popPacket(); local obj=popOne(); tailFunction=popOne(); tailArgs={n=args.n+1,obj}; for i=1,args.n do tailArgs[i+1]=args[i] end; status=TAIL]=]},
         CLOSURE = {[=[local child=prototypes[a]; local captured={}
             for _,slot in ipairs(child[4]) do captured[slot]=cells[slot] end
-            push(pack(function(...) return run(a,captured,pack(...)) end))]=]},
+            pushOne(function(...) return run(a,captured,pack(...)) end)]=]},
         TABLE = {
-            "push(pack({}))",
-            "local t={}; push(pack(t))",
+            "pushOne({})",
+            "local t={}; pushOne(t)",
         },
         FIELD = {
-            "local value=pop()[1]; local key=pop()[1]; peek()[1][key]=value",
-            "local valuePack=pop(); local keyPack=pop(); local obj=peek()[1]; obj[keyPack[1]]=valuePack[1]",
+            "local value=popOne(); local key=popOne(); peekOne()[key]=value",
+            "local value=popOne(); local key=popOne(); local obj=peekOne(); obj[key]=value",
         },
-        APPEND = {[=[local values=pop(); local obj=peek()[1]; local count=1; if b==1 then count=values.n end; for i=1,count do obj[a+i-1]=values[i] end]=]},
+        APPEND = {[=[local values=popPacket(); local obj=peekOne(); local count=1; if b==1 then count=values.n end; for i=1,count do obj[a+i-1]=values[i] end]=]},
         JUMP = {
             "position=a+drift",
             "local target=a; position=target+drift",
         },
         JTRUE = {
-            "if pop()[1] then position=a+drift end",
-            "local ok=pop()[1]; if ok then position=a+drift end",
+            "if popOne() then position=a+drift end",
+            "local ok=popOne(); if ok then position=a+drift end",
         },
         JFALSE = {
-            "if not pop()[1] then position=a+drift end",
-            "local ok=pop()[1]; if not ok then position=a+drift end",
+            "if not popOne() then position=a+drift end",
+            "local ok=popOne(); if not ok then position=a+drift end",
         },
         RETURN = {
-            "result=pop(); status=DONE",
-            "local r=pop(); result=r; status=DONE",
+            "result=popPacket(); status=DONE",
+            "local values=popPacket(); result=values; status=DONE",
         },
-        FORPREP = {[=[local v=pop(); local x,y,z=tonumber(v[1]),tonumber(v[2]),tonumber(v[3])
+        FORPREP = {[=[local v=popPacket(); local x,y,z=tonumber(v[1]),tonumber(v[2]),tonumber(v[3])
             if x==nil or y==nil or z==nil then error('invalid numeric for',0) end
             cells[a]={x}; cells[b]={y}; cells[c]={z}]=]},
         FORCHECK = {
-            "local x,y,z=cells[a][1],cells[b][1],cells[c][1]; push(pack((z>0 and x<=y) or (z<=0 and x>=y)))",
-            "local x=cells[a][1]; local y=cells[b][1]; local z=cells[c][1]; push(pack((z>0 and x<=y) or (z<=0 and x>=y)))",
+            "local x,y,z=cells[a][1],cells[b][1],cells[c][1]; pushOne((z>0 and x<=y) or (z<=0 and x>=y))",
+            "local x=cells[a][1]; local y=cells[b][1]; local z=cells[c][1]; pushOne((z>0 and x<=y) or (z<=0 and x>=y))",
         },
         FORSTEP = {
             "cells[a][1]=cells[a][1]+cells[b][1]",
             "local cell=cells[a]; cell[1]=cell[1]+cells[b][1]",
         },
-        ITERPREP = {[=[local v=pop(); local fn,st,control=v[1],v[2],v[3]
+        ITERPREP = {[=[local v=popPacket(); local fn,st,control=v[1],v[2],v[3]
             if type(fn)=='table' then
                 local mt=getmetatable(fn)
                 if type(mt)=='table' and mt.__iter then fn,st,control=mt.__iter(fn)
@@ -183,13 +218,14 @@ function R.emit(protos, constants, luaVersion, options)
             end
             cells[a]={fn}; cells[b]={st}; cells[c]={control}]=]},
         ITERNEXT = {
-            "local values=pack(cells[a][1](cells[b][1],cells[c][1])); cells[c][1]=values[1]; push(values)",
-            "local fn,st,ctrl=cells[a][1],cells[b][1],cells[c][1]; local values=pack(fn(st,ctrl)); cells[c][1]=values[1]; push(values)",
+            "local values=pack(cells[a][1](cells[b][1],cells[c][1])); cells[c][1]=values[1]; pushPacket(values)",
+            "local fn,st,ctrl=cells[a][1],cells[b][1],cells[c][1]; local values=pack(fn(st,ctrl)); cells[c][1]=values[1]; pushPacket(values)",
         },
     }
     -- Lua 5.1 commits assignments right-to-left; Luau commits left-to-right.
     if luaVersion == "Lua51" then
-        handlers.ASSIGN={handlers.ASSIGN[1]:gsub("for i=1,a do local ref", "for i=a,1,-1 do local ref")}
+        -- Parentheses keep gsub's replacement count out of the handler variants.
+        handlers.ASSIGN={(handlers.ASSIGN[1]:gsub("for i=1,a do local ref", "for i=a,1,-1 do local ref"))}
     end
     local bin = {ADD="+",SUB="-",MUL="*",DIV="/",MOD="%",POW="^",CONCAT="..",LT="<",GT=">",LE="<=",GE=">=",EQ="==",NE="~="}
     local binNames={}; for op in pairs(bin) do binNames[#binNames+1]=op end
@@ -197,15 +233,15 @@ function R.emit(protos, constants, luaVersion, options)
     for _, op in ipairs(binNames) do
         local symbol=bin[op]
         handlers[op] = {
-            "local right=pop()[1]; local left=pop()[1]; push(pack(left " .. symbol .. " right))",
-            "local r=pop()[1]; local l=pop()[1]; local out=l " .. symbol .. " r; push(pack(out))",
-            "do local b0=pop()[1]; local a0=pop()[1]; push(pack(a0 " .. symbol .. " b0)) end",
+            "local right=popOne(); local left=popOne(); pushOne(left " .. symbol .. " right)",
+            "local r=popOne(); local l=popOne(); local out=l " .. symbol .. " r; pushOne(out)",
+            "do local b0=popOne(); local a0=popOne(); pushOne(a0 " .. symbol .. " b0) end",
         }
     end
     for op, symbol in pairs({NOT="not ",NEG="-",LEN="#"}) do
         handlers[op] = {
-            "local value=pop()[1]; push(pack(" .. symbol .. "value))",
-            "local v=pop()[1]; local r=" .. symbol .. "v; push(pack(r))",
+            "local value=popOne(); pushOne(" .. symbol .. "value)",
+            "local v=popOne(); local r=" .. symbol .. "v; pushOne(r)",
         }
     end
     -- Executable decoys only mutate private noise. Dead handlers have no host effects.
@@ -294,6 +330,7 @@ function R.emit(protos, constants, luaVersion, options)
         encrypted[id]=array({key,array(bytes)})
     end
     local emittedHandlers={}
+    local frameFields={"cells","varargs","position","drift","result","status","tailFunction","tailArgs","noise"}
     for _,name in ipairs(names) do
         for _,code in ipairs(opcodes[name]) do
             local body=choice(handlers[name])
@@ -309,9 +346,18 @@ function R.emit(protos, constants, luaVersion, options)
             else
                 body="do "..body.." end"
             end
+            for _,helper in ipairs({"constant","pushOne","pushPacket","peekAt","packStack"}) do
+                body=body:gsub(helper.."%(",helper.."(f,")
+            end
+            for _,helper in ipairs({"popOne","popPacket","peekOne","duplicate","drop"}) do
+                body=body:gsub(helper.."%(%)",helper.."(f)")
+            end
+            for _,field in ipairs(frameFields) do
+                body=body:gsub("%f[%w_]"..field.."%f[^%w_]","f."..field)
+            end
             local args={"a","b","c"}; local layout=layouts[code]
             local params={args[layout[1]],args[layout[2]],args[layout[3]]}
-            emittedHandlers[#emittedHandlers+1]="dispatch["..code.."]=function("..table.concat(params,",")..") "..body.." end"
+            emittedHandlers[#emittedHandlers+1]="dispatch["..code.."]=function(f,"..table.concat(params,",")..") "..body.." end"
         end
     end
     shuffle(emittedHandlers)
@@ -322,7 +368,6 @@ return (function(env,...)
     local unpackValues=unpack or table.unpack
     local function pack(...) return {n=select('#',...),...} end
     local nilSentinel={}
-    local activeConstantCache=nil
     local decodedProtoCache={}
     local verifiedProtoCache={}
     local guardString=string
@@ -362,8 +407,8 @@ return (function(env,...)
         if VERIFYONCE then verifiedProtoCache[pid]=true end
         return true
     end
-    local function constant(id)
-        local cache=activeConstantCache
+    local function constant(frame,id)
+        local cache=frame.constantCache
         if cache then
             local cached=cache[id]
             if cached~=nil then
@@ -406,13 +451,74 @@ return (function(env,...)
         local ok=pcall(waitFunc)
         if not ok then yieldDisabled=true end
     end
+    local function pushOne(frame,value)
+        frame.top=frame.top+STACKMUL
+        frame.stack[frame.top]=value
+    end
+    local function pushPacket(frame,values)
+        frame.top=frame.top+STACKMUL
+        frame.stack[frame.top]=values[1]
+        frame.packets[frame.top]=values
+    end
+    local function clearTop(frame)
+        frame.stack[frame.top]=nil
+        frame.packets[frame.top]=nil
+        frame.top=frame.top-STACKMUL
+    end
+    local function popOne(frame)
+        local value=frame.stack[frame.top]
+        clearTop(frame)
+        return value
+    end
+    local function popPacket(frame)
+        local values=frame.packets[frame.top]
+        if not values then
+            values={n=1,frame.stack[frame.top]}
+        end
+        clearTop(frame)
+        return values
+    end
+    local function peekOne(frame) return frame.stack[frame.top] end
+    local function peekAt(frame,index)
+        local values=frame.packets[frame.top]
+        if values then return values[index] end
+        if index==1 then return frame.stack[frame.top] end
+        return nil
+    end
+    local function duplicate(frame)
+        local old=frame.top
+        frame.top=old+STACKMUL
+        frame.stack[frame.top]=frame.stack[old]
+        frame.packets[frame.top]=frame.packets[old]
+    end
+    local function drop(frame) clearTop(frame) end
+    local function packStack(frame,count)
+        local first=frame.top-(count-1)*STACKMUL
+        local values={n=0}
+        for i=1,count do
+            local position=first+(i-1)*STACKMUL
+            local packet=frame.packets[position]
+            local arity=i==count and packet and packet.n or 1
+            for j=1,arity do
+                values.n=values.n+1
+                local value
+                if packet then value=packet[j]
+                elseif j==1 then value=frame.stack[position] end
+                values[values.n]=value
+            end
+            frame.stack[position]=nil
+            frame.packets[position]=nil
+        end
+        frame.top=first-STACKMUL
+        pushPacket(frame,values)
+    end
     local run
+    local dispatch={}
+    HANDLERS
     run=function(id,captured,args)
         traceGuard()
-        local previousConstantCache=activeConstantCache
         local frameConstantCacheEnabled=FRAMECONSTANTCACHE
         local localConstantCache=frameConstantCacheEnabled and {} or nil
-        activeConstantCache=localConstantCache
         local proto=prototypes[id]; verifyProto(id,proto)
         local stream=proto[1]
         local decodedCache=nil
@@ -425,20 +531,17 @@ return (function(env,...)
         local varargs={n=math.max(0,args.n-#proto[3])}
         for i=1,varargs.n do varargs[i]=args[i+#proto[3]] end
         args=nil
-        local stack={}; local top=STACKADD
-        local function push(value) top=top+STACKMUL; stack[top]=value end
-        local function pop() local value=stack[top]; stack[top]=nil; top=top-STACKMUL; return value end
-        local function peek() return stack[top] end
-        local drift=proto[2]%65521
-        local position=PCMUL+PCADD+drift
-        local status=LIVE; local result; local tailFunction,tailArgs; local noise=proto[2]%65521
+        local frame={
+            cells=cells,varargs=varargs,stack={},packets={},top=STACKADD,
+            drift=proto[2]%65521,status=LIVE,noise=proto[2]%65521,
+            constantCache=localConstantCache,
+        }
+        frame.position=PCMUL+PCADD+frame.drift
         local vmBudget=0
         local guardBudget=0
         local clockFunc=(os and os.clock) or nil
         local lastYieldAt=clockFunc and clockFunc() or 0
-        local dispatch={}
-        HANDLERS
-        while status==LIVE do
+        while frame.status==LIVE do
             vmBudget=vmBudget+1
             guardBudget=guardBudget+1
             if YIELDEVERY>0 and vmBudget>=YIELDEVERY then
@@ -453,7 +556,7 @@ return (function(env,...)
                 end
             end
             if TRACEGUARDEVERY>0 and guardBudget>=TRACEGUARDEVERY then guardBudget=0; traceGuard() end
-            local index=(position-drift-PCADD)/PCMUL
+            local index=(frame.position-frame.drift-PCADD)/PCMUL
             local offset=(index-1)*4
             local cacheBase=index*4
             local opcode,a,b,c
@@ -484,15 +587,14 @@ return (function(env,...)
                     decodedCache[cacheBase-3]=opcode; decodedCache[cacheBase-2]=a; decodedCache[cacheBase-1]=b; decodedCache[cacheBase]=c
                 end
             end
-            drift=(drift+stream[offset+1])%65521
-            position=(index+1)*PCMUL+PCADD+drift
+            frame.drift=(frame.drift+stream[offset+1])%65521
+            frame.position=(index+1)*PCMUL+PCADD+frame.drift
             local handler=dispatch[opcode]
             if not handler then error('invalid instruction',0) end
-            handler(a,b,c)
+            handler(frame,a,b,c)
         end
-        local finalStatus, finalResult, finalTailFunction, finalTailArgs = status, result, tailFunction, tailArgs
+        local finalStatus, finalResult, finalTailFunction, finalTailArgs = frame.status, frame.result, frame.tailFunction, frame.tailArgs
         if localConstantCache then for k in pairs(localConstantCache) do localConstantCache[k]=nil end end
-        activeConstantCache=previousConstantCache
         if finalStatus==TAIL then return finalTailFunction(unpackValues(finalTailArgs,1,finalTailArgs.n)) end
         return unpackValues(finalResult,1,finalResult.n)
     end

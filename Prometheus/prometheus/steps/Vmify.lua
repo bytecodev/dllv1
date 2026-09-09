@@ -14,9 +14,9 @@ Vmify.Name = "Vmify";
 Vmify.SettingsDescriptor = {
     YieldEvery = {
         type = "number",
-        default = 12000,
+        default = 0,
         min = 0,
-        description = "Cooperative Roblox scheduler budget. 0 disables runtime yielding."
+        description = "Optional cooperative scheduler budget. Disabled by default because yielding is illegal in some executor entry threads."
     },
     NoiseRate = {
         type = "number",
