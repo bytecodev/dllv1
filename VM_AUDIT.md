@@ -1,6 +1,6 @@
 # Audit numeric VM — 2026-09-09
 
-Status: file `04_stealanegg.lua` sudah diterima dan berhasil diuji dengan Medium pada kompilasi Luau, static/binary dump scan, dan bounded startup mock. Pengujian executor Roblox asli akan dilakukan pengguna; belum ada hasil live yang diklaim.
+Status: file `04_stealanegg.lua` berhasil diuji dengan Medium pada kompilasi Luau, static/binary dump scan, dan bounded startup mock. Pengguna kemudian melaporkan bahwa output terbaru sudah diuji pada executor Roblox dan berjalan tanpa kendala; jenis executor, log, dan cakupan fitur live tidak tersedia untuk verifikasi independen.
 
 ## Temuan dan perubahan
 
@@ -20,7 +20,7 @@ Status: file `04_stealanegg.lua` sudah diterima dan berhasil diuji dengan Medium
 
 Perintah utama: `npm test`. Node 24.18.0; compiler dan differential Lua dijalankan melalui Wasmoon (Lua 5.4). Runtime Luau memakai executable resmi 0.737. SHA256 arsip `luau-windows.zip`: `8cd28be648f3e5cc4bfc977d2344e43540ade5f3524440b171eecf54d3a4fb7c`.
 
-Hasil run terbaru setelah optimasi startup: **22 tests, 21 passed, 0 failed, 1 skipped**, exit code 0, sekitar 37,9 detik. Skip tersisa adalah eksekusi dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan sudah dijalankan. `git diff --check` juga lulus.
+Hasil run terbaru setelah optimasi startup dan penambahan corpus umum: **24 tests, 23 passed, 0 failed, 1 skipped**, exit code 0, sekitar 38,5 detik. Skip tersisa adalah eksekusi otomatis dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan dan laporan live pengguna sudah tersedia. `git diff --check` juga lulus.
 
 | Pemeriksaan | Bukti |
 | --- | --- |
@@ -37,15 +37,15 @@ Hasil run terbaru setelah optimasi startup: **22 tests, 21 passed, 0 failed, 1 s
 | Static output dan Lua binary dump | Tidak ada game:GetService, ReplicatedStorage, HttpGet, RemoteEvent, RemoteFunction, AskWearStill, CodexUI |
 | Disassembly Luau | Baseline mengekspos 7 nama penting; dump VM mengekspos 0. Ukuran dump 2.526 -> 121.962 byte. GetService diperiksa tersendiri karena NAMECALL memisahkannya dari global game |
 | 04_stealanegg.lua Medium | Build, kompilasi Luau native, static scan dan binary dump scan lulus. Source dan output memiliki startup trace identik pada local UI loader dan mock HTTP fallback; Config tab juga dibangun |
-| Roblox executor live / Instance asli | **Belum diuji**: tes memakai Luau CLI dan mock API, bukan Roblox client |
+| Roblox executor live / Instance asli | Pengguna melaporkan output Medium berjalan tanpa kendala; hasil ini belum memiliki log/cakupan fitur untuk verifikasi otomatis |
 
 Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblox.simple-dump.luac`, disassembly `roblox.luau-disassembly.txt`, `dump-metrics.json`, `size-metrics.json`, dan pasangan source/output untuk tes native. Artefak dan executable tidak masuk git.
 
 ### File target yang diterima
 
 - Source: 309.966 byte, SHA256 `0aee51e4ad8e29e13e1a35f3d1eb586eceb4de9c5d51a6ce0c6aaeeceb18d47b`.
-- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.539 byte, Medium + LuaU, seed 42, build sekitar 14,0 detik pada full suite terakhir.
-- SHA256 output terbaru: `e6ff4afbf3da24a1cf4a402ccb129fdee9781077d958eb6161066f214751e657`. Metadata otomatis ada di `test-results/04_stealanegg.build.json` dan `test-results/04_stealanegg.optimized.build.json`.
+- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.793 byte, Medium + LuaU, seed 42, build sekitar 13,4 detik pada full suite terakhir.
+- SHA256 output terbaru: `e04dd8f95a7fc2012b7b6800d6e821c68b29f78d08cd332359bae30bd07fa2bf`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
 - Native Luau binary tanpa debug info berhasil dibuat. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
 - Startup fixture menghasilkan `STARTUP_OK instances=6 tabs=7 configBuilds=1 pendingJobs=1` untuk source maupun output, pada kedua cabang loader. HTTP mengembalikan mock UI lokal; tidak ada download/jaringan nyata.
 - Satu job animasi dijalankan sampai yield pertama. Game feature tab, interaction/input callbacks, getgc terhadap object game, __namecall hooks, respawn dan fitur teleport belum diuji. Semua feature tab tetap lazy; hanya Config yang dibangun dalam tes tambahan.
@@ -61,7 +61,7 @@ Output VM lebih besar dan lambat daripada source native. Angka stream besar meru
 
 Smoke tambahan Extreme (di luar suite rutin) menghasilkan 7 di Luau, tetapi outputnya 16.230.595 byte untuk `print(7)`, build sekitar 40 detik dan run pertama melewati timeout 5 detik. Eksekusi ulang tanpa batas 5 detik berhasil. Extreme belum mendapat matriks semantik penuh dan tidak layak dijadikan default.
 
-Untuk menutup penerimaan: pengguna menjalankan output Medium pada executor Roblox yang dimaksud dan mengirim log jika ada error. Pengguna telah menyatakan tidak ada runner/log executor yang dapat diakses saat ini. Tidak ada hasil game feature atau live executor yang disimpulkan hanya dari keberhasilan startup mock.
+Pengguna sudah menjalankan output Medium pada executor Roblox dan melaporkan hasil tanpa kendala. Karena tidak ada runner/log executor yang dapat diakses dari workspace, laporan tersebut dicatat sebagai validasi pengguna dan tidak menggantikan regression suite otomatis.
 
 ## Diagnosis laporan freeze sebelum UI
 
@@ -98,7 +98,7 @@ Stack scalar tidak lagi membungkus setiap nilai dalam packet table. Packet hanya
 
 Auto-yield Medium dinonaktifkan (`YieldEvery = 0`). Uji Luau CLI menemukan bahwa yield dari entry thread tertentu dapat berhenti dengan `thread yielded unexpectedly`; `pcall(task.wait)` tidak menjamin kasus itu dapat dipulihkan. Yield tetap tersedia sebagai opsi eksplisit, tetapi bukan mekanisme pencegah freeze default.
 
-Build final berkurang dari 2.905.652 menjadi 2.007.539 byte (sekitar 30,9%). Pada fixture `getgc` yang sama, hasil akhir adalah:
+Build final berkurang dari 2.905.652 menjadi sekitar 2.007.793 byte (sekitar 30,9%). Pada fixture `getgc` yang sama, hasil akhir adalah:
 
 | Tabel pada mock getgc | Medium sebelum | Medium sesudah | Heap delta sebelum | Heap delta sesudah |
 | --- | ---: | ---: | ---: | ---: |
@@ -109,3 +109,11 @@ Build final berkurang dari 2.905.652 menjadi 2.007.539 byte (sekitar 30,9%). Pad
 Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Setelah optimasi, full suite tetap **21 pass, 0 fail, 1 skip**, startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
 
 `04_stealanegg.lua` masih melakukan crawl `getgc(true)` sebelum membuat UI. Waktu bagian ini bertambah mengikuti jumlah object/table pada client, jadi VM yang lebih cepat mengurangi stall tetapi tidak dapat membuat scan tanpa batas menjadi konstan. Jika koleksi executor jauh lebih besar daripada fixture, pemindahan scan ke sesudah UI atau pemrosesan batch perlu dilakukan pada source aplikasi agar UI selalu muncul lebih dahulu.
+
+## Regression corpus umum
+
+`04_stealanegg.lua` sekarang hanya menjadi integration fixture. Suite utama juga menjalankan `qa/vm-corpus.test.js`, yang tidak mengambil source, nama, atau struktur dari file tersebut. Corpus menguji control flow Luau, multi-return dan trailing nil, closure/upvalue/tail recursion, coroutine yield/resume, metamethod dan generalized iteration, error/pcall, pola object/method Roblox, serta 2.000 hot callback invocation. Delapan program aritmetika/control-flow tambahan dibuat secara deterministik dengan bentuk dan seed berbeda.
+
+Corpus ditemukan dan memperbaiki perbedaan Luau pada `{fn()}` ketika hasil terakhir memiliki lubang nil. VM sekarang menggunakan reservasi array Luau ketika perlu agar layout table constructor dan hasil operator panjang sesuai source. Run final menjalankan delapan kategori pada seed 13 dan 907, ditambah delapan generated programs: seluruh output sama dengan source.
+
+Benchmark generik `npm run benchmark:vm` membangun workload sendiri dan tidak membaca file pengguna. Pada run 5.000 callback terakhir, source menghasilkan `BENCH_OK 50040000` dalam sekitar 2,14 ms dan Medium menghasilkan nilai sama dalam sekitar 710,62 ms. Angka ini dipakai untuk mendeteksi regresi performa relatif antar-build, bukan sebagai jaminan waktu pada perangkat Roblox.

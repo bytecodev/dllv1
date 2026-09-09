@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/index.js",
     "register": "node src/register-commands.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js qa/*.test.js",
+    "benchmark:vm": "node scripts/benchmark-vm.js",
     "obfuscate": "node scripts/obfuscate.js"
   },
   "dependencies": {

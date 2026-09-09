@@ -182,7 +182,9 @@ function R.emit(protos, constants, luaVersion, options)
             "local value=popOne(); local key=popOne(); peekOne()[key]=value",
             "local value=popOne(); local key=popOne(); local obj=peekOne(); obj[key]=value",
         },
-        APPEND = {[=[local values=popPacket(); local obj=peekOne(); local count=1; if b==1 then count=values.n end; for i=1,count do obj[a+i-1]=values[i] end]=]},
+        APPEND = {[=[local values=popPacket(); local count=1; if b==1 then count=values.n end
+            local obj=peekOne(); if b==1 and count>1 then obj=reserveArray(a+count-1) end
+            for i=1,count do obj[a+i-1]=values[i] end]=]},
         JUMP = {
             "position=a+drift",
             "local target=a; position=target+drift",
@@ -346,7 +348,7 @@ function R.emit(protos, constants, luaVersion, options)
             else
                 body="do "..body.." end"
             end
-            for _,helper in ipairs({"constant","pushOne","pushPacket","peekAt","packStack"}) do
+            for _,helper in ipairs({"constant","pushOne","pushPacket","peekAt","packStack","reserveArray"}) do
                 body=body:gsub(helper.."%(",helper.."(f,")
             end
             for _,helper in ipairs({"popOne","popPacket","peekOne","duplicate","drop"}) do
@@ -367,6 +369,7 @@ return (function(env,...)
     local pool=CONSTANTS
     local unpackValues=unpack or table.unpack
     local function pack(...) return {n=select('#',...),...} end
+    local createArray=table and table.create
     local nilSentinel={}
     local decodedProtoCache={}
     local verifiedProtoCache={}
@@ -492,6 +495,14 @@ return (function(env,...)
         frame.packets[frame.top]=frame.packets[old]
     end
     local function drop(frame) clearTop(frame) end
+    local function reserveArray(frame,size)
+        local previous=frame.stack[frame.top]
+        if not createArray then return previous end
+        local replacement=createArray(size)
+        for key,value in pairs(previous) do replacement[key]=value end
+        frame.stack[frame.top]=replacement
+        return replacement
+    end
     local function packStack(frame,count)
         local first=frame.top-(count-1)*STACKMUL
         local values={n=0}
