@@ -60,7 +60,7 @@ return {
 		NumberFormat = "MixedHex",
 		Seed = 0,
 		Steps = {
-			{ Name = "Vmify", Settings = { YieldEvery = 0, YieldInterval = 0.035, NoiseRate = 96, FrameConstantCache = true, InstructionCache = true, IntegrityStep = 257, VerifyOnce = true, TraceGuardEvery = 0, HandlerWrapperNoise = false } },
+			{ Name = "Vmify", Settings = { YieldEvery = 0, YieldInterval = 0.035, NoiseRate = 96, FrameConstantCache = true, ConstantCacheSlots = 32, InstructionCache = true, IntegrityStep = 1, VerifyOnce = true, TraceGuardEvery = 0, HandlerWrapperNoise = false } },
 		},
 	},
 	-- Strong obfuscation, high performance loss.

@@ -66,17 +66,19 @@ AST source -> numeric instructions -> encrypted four-word stream per function
            -> generated polymorphic VM -> renamed/minified Lua compatible with Luau
 ```
 
-Opcode memiliki dua alias acak, dengan urutan operand berbeda per alias. Register/cell ID dan stack position memakai encoding affine; PC memakai encoding affine dengan offset yang berubah setiap instruction. State dispatch memakai tag numerik acak. Stream instruction mengenkripsi opcode dan operand dengan keystream aritmetika per prototype/instruction dan feedback antar-word. Decoy instruction yang dijalankan hanya mengubah state noise privat; dead handler tidak memanggil API host.
+Opcode memiliki dua sampai empat alias acak, dengan urutan dan mask operand berbeda per alias. Register/cell ID dan stack position memakai encoding affine; PC memakai encoding affine dengan offset yang berubah setiap instruction. State dispatch dan nama field frame diacak per build. Setiap prototype memilih satu dari tiga skema keystream instruction dengan parameter aritmetika per build dan feedback antar-word. Cache instruction callback menyimpan opcode yang masih disegel serta operand yang masih bermask; prototype entry tidak disimpan. Decoy instruction yang dijalankan hanya mengubah state noise privat; dead handler tidak memanggil API host.
 
 Emitter Medium memakai `MixedHex`: integer VM yang cocok ditulis sebagai campuran desimal dan literal `0x...` yang dipilih per build. Hex hanya dipakai jika tidak memperbesar literal, sehingga variasi source tidak menambah operasi runtime atau ukuran output. Karakter seperti `!` dan `#` tidak dapat dipakai di identifier Luau; memasukkannya sebagai string decoy hanya menambah beban dan tidak menghambat dumper runtime.
 
-Constant pool berisi byte numerik terenkripsi, termasuk type tag. Constant baru didekripsi oleh instruction yang memerlukannya. Tidak ada plaintext pool/cache permanen; buffer decoder dan stack slot dibersihkan setelah dipakai. Nilai program yang masih hidup—misalnya local string atau upvalue milik source—tetap harus tersedia sesuai semantik program.
+Constant pool berisi byte numerik terenkripsi, termasuk type tag. Setiap constant memakai salah satu dari tiga decoder per build dan baru didekripsi oleh instruction yang memerlukannya. Cache plaintext dibatasi 32 slot per frame aktif dan dibersihkan saat frame selesai; tidak ada plaintext constant array permanen. Nilai program yang masih hidup, misalnya local string atau upvalue milik source, tetap harus tersedia sesuai semantik program.
+
+Medium memverifikasi seluruh word instruction sekali saat prototype pertama dipakai, termasuk metadata parameter/capture dan key cache. Setiap constant diverifikasi atas seluruh byte pada saat lazy decode. Tabel dispatch juga memeriksa jumlah handler dan seal atas key opcode. Jalur scheduler dan trace guard tidak dipancarkan ketika pengaturannya nol agar startup Medium tetap ringan.
 
 Global lookup, member indexing, dan method resolution ditangani intrinsic VM. Pemanggilan method meneruskan object sebagai `self`. Medium tidak memasang debug hook, mengganti environment dengan `setfenv`, atau menjalankan loader untuk source tersembunyi. `getgenv`, `task`, `typeof`, `pcall`, dan `coroutine` diteruskan ke environment host.
 
 Default API, Discord, dan CLI adalah Medium + LuaU. Alias input lama `Roblox` dialihkan ke Medium. Seed eksplisit reproducible; seed otomatis memakai `crypto.randomInt`. `src/bytecode.js` meneruskan ke engine yang sama.
 
-Encoding ini merupakan perlindungan obfuscation dengan decoder/key tertanam, bukan jaminan kriptografi terhadap pihak yang mengendalikan runtime. Dump sederhana tetap memperlihatkan interpreter generik. Instrumentasi saat API dipanggil dapat melihat nilai yang memang harus diberikan kepada API tersebut.
+Encoding dan integrity check ini merupakan perlindungan obfuscation dengan decoder/key tertanam, bukan jaminan kriptografi terhadap pihak yang mengendalikan runtime. Attacker yang dapat mengubah runtime juga dapat menonaktifkan atau menghitung ulang check lokal. Dump sederhana tetap memperlihatkan interpreter generik; instrumentasi saat API dipanggil dapat melihat nilai yang memang harus diberikan kepada API tersebut.
 
 ## Front-end Luau bertipe
 
@@ -102,4 +104,4 @@ $env:LUAU_BIN = 'C:\path\luau.exe'
 npm test
 ```
 
-Jika `04_stealanegg.lua` ada di root workspace, test otomatis memakainya. Fixture startup khusus membandingkan source/output pada kedua jalur pemuatan UI dan pembukaan Config tab. Game feature dan input callbacks tetap di luar cakupannya; `ROBLOX_SETUP` dapat dipakai untuk host fixture tambahan. Hasil mock/CLI Luau tidak membuktikan keberhasilan pada Roblox executor live. Run terbaru: 25 passed, 0 failed, 1 skipped (host fixture eksternal belum tersedia). Lihat `VM_AUDIT.md` untuk hasil dan batas pengujian.
+Jika `04_stealanegg.lua` ada di root workspace, test otomatis memakainya. Fixture startup khusus membandingkan source/output pada kedua jalur pemuatan UI dan pembukaan Config tab. Game feature dan input callbacks tetap di luar cakupannya; `ROBLOX_SETUP` dapat dipakai untuk host fixture tambahan. Hasil mock/CLI Luau tidak membuktikan keberhasilan pada Roblox executor live. Run terbaru: 31 tests, 30 passed, 0 failed, 1 skipped (host fixture eksternal belum tersedia). Lihat `VM_AUDIT.md` untuk hasil dan batas pengujian.

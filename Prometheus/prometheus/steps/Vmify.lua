@@ -29,11 +29,17 @@ Vmify.SettingsDescriptor = {
         default = true,
         description = "Cache decrypted constants only for the active VM frame, then wipe on return."
     },
+    ConstantCacheSlots = {
+        type = "number",
+        default = 32,
+        min = 1,
+        description = "Maximum direct-mapped plaintext constant cache slots per active VM frame."
+    },
     IntegrityStep = {
         type = "number",
-        default = 257,
+        default = 1,
         min = 0,
-        description = "Sampled bytecode integrity verification step. 1 is full but expensive; 0 disables."
+        description = "Bytecode integrity stride. 1 verifies every encrypted word; larger values sample; 0 disables."
     },
     TraceGuardEvery = {
         type = "number",
@@ -72,6 +78,7 @@ function Vmify:apply(ast, pipeline)
         YieldEvery = self.YieldEvery,
         NoiseRate = self.NoiseRate,
         FrameConstantCache = self.FrameConstantCache,
+        ConstantCacheSlots = self.ConstantCacheSlots,
         IntegrityStep = self.IntegrityStep,
         TraceGuardEvery = self.TraceGuardEvery,
         InstructionCache = self.InstructionCache,

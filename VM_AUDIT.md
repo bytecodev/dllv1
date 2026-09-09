@@ -1,4 +1,4 @@
-# Audit numeric VM — 2026-09-09
+# Audit numeric VM — 2026-09-10
 
 Status: file `04_stealanegg.lua` berhasil diuji dengan Medium pada kompilasi Luau, static/binary dump scan, dan bounded startup mock. Pengguna kemudian melaporkan bahwa output terbaru sudah diuji pada executor Roblox dan berjalan tanpa kendala; jenis executor, log, dan cakupan fitur live tidak tersedia untuk verifikasi independen.
 
@@ -6,21 +6,36 @@ Status: file `04_stealanegg.lua` berhasil diuji dengan Medium pada kompilasi Lua
 
 - `Vmify` sebelumnya membangun AST blok dan threshold dispatcher. Sekarang ia memanggil compiler instruction tersendiri; emitter legacy hanya dipertahankan untuk kompatibilitas internal dan regresi.
 - Medium sekarang hanya memakai `Vmify` numerik, kemudian rename/minify bawaan pipeline. Lapisan AntiDump, EncryptStrings, AntiTamper, ConstantArray dan GlobalProxy tidak lagi menjadi dasar Medium.
-- Setiap function menjadi prototype dengan flat stream empat word terenkripsi per instruction. Runtime membaca/dekripsi satu instruction, menjalankan handler generik, lalu membuang buffer instruction tersebut. Tidak ada handler berisi blok source.
-- Opcode map, dua alias per operasi, permutasi operand, bentuk handler, tag state, encoding register/stack/PC, key, serta decoy berbeda antar-seed. PC memiliki offset berubah per instruction. Runtime tidak menyimpan daftar opcode semantik sebagai string.
+- Setiap function menjadi prototype dengan flat stream empat word terenkripsi per instruction. Prototype entry didekripsi per instruction tanpa cache permanen; callback berulang memakai cache opcode tersegel dan operand bermask. Tidak ada handler berisi blok source.
+- Opcode map, dua sampai empat alias per operasi, permutasi dan mask operand, bentuk handler, tag state, encoding register/stack/PC, key, nama field frame, serta decoy berbeda antar-seed. PC memiliki offset berubah per instruction. Runtime tidak menyimpan daftar opcode semantik sebagai string.
 - Register/cell **alamatnya** encoded; nilai object/function dan nilai program aktif tetap native agar identitas object, metamethod dan host API terjaga. Ini tidak mengklaim semua nilai hidup selalu terenkripsi di memori.
-- Constant/string pool tetap terenkripsi. Tidak ada cache plaintext permanen. Decoder dipanggil saat CONST/GLOBAL/METHOD/GREF dijalankan; temporary character buffer dan slot stack yang dikonsumsi dibersihkan. Closure hanya menangkap cell yang dirujuknya.
+- Constant/string pool tetap terenkripsi. Tiga skema decoder dipilih per constant. Decoder dipanggil saat CONST/GLOBAL/METHOD/GREF dijalankan; cache plaintext dibatasi 32 slot pada frame aktif dan dibersihkan saat selesai. Closure hanya menangkap cell yang dirujuknya.
 - Return/argument pack menyimpan jumlah hasil eksplisit, termasuk nil akhir. Compiler menangani closure, recursion/tail call, short circuit, multi-assignment, table, loop, Luau continue/compound/if expression, serta ordinary generalized table iteration.
 - Commit multi-assignment mengikuti target: Lua51 dari kanan ke kiri; LuaU dari kiri ke kanan. RHS dan target indexing dievaluasi sebelum commit.
 - Intrinsic global/member/method mengambil nama dari pool. Method dipanggil dengan object asli sebagai self. Medium tidak memerlukan debug dan tidak memanggil setfenv. Guard debug legacy Strong/Extreme dinonaktifkan saat target LuaU.
 - `src/bytecode.js` sebelumnya menunjuk folder engine yang tidak tersedia; sekarang menjadi alias `src/prometheus.js`. API, bot, CLI dan harness memakai default Medium + LuaU; preset Roblox lama dialihkan ke Medium pada API/bot.
 - `emit.lua` pada checkout awal sudah memakai compact array, begitu juga `createBlock`. Regresi 20 build mengawasi array tepat sebelum table.sort dan memverifikasi comparator tidak menerima nil. Tidak perlu menambahkan mapping ID ke sequence tersebut.
 
+### Temuan reverse engineering dan hardening terbaru
+
+| Kelemahan yang ditemukan | Perubahan engine | Dampak terhadap reverse engineering |
+| --- | --- | --- |
+| Modulus, multiplier, formula digest, dan state modulus tetap sehingga mudah difingerprint antar-output | Parameter cipher/digest/state diacak per build; instruction dan constant masing-masing memiliki tiga mode decode | Signature lintas-build dan decoder statis tunggal tidak lagi cukup untuk semua output |
+| Layout prototype `[stream,key,params,captures,digest]` dan constant `[key,bytes]` selalu sama | Posisi tujuh field prototype dan empat field constant dipermutasi per build | Dumper tabel harus memulihkan layout build sebelum menafsirkan data |
+| Cache instruction menyimpan opcode dan operand hasil decode secara langsung | Prototype entry tidak dicache; cache callback menyimpan `opcode + cacheKey` dan operand yang masih memakai mask alias handler | Snapshot cache tidak langsung menjadi instruction semantik |
+| Cache constant frame dapat tumbuh sebanyak semua constant yang disentuh | Cache direct-mapped dibatasi 32 slot dan nilainya dihapus saat frame selesai | Jendela plaintext dan penggunaan memori lebih kecil |
+| Checksum instruction hanya sampling dengan offset tetap, metadata prototype tidak terikat, constant tidak diperiksa | Medium memeriksa semua word sekali per prototype, mengikat mode/cache key/parameter/capture, dan memeriksa seluruh byte constant saat lazy decode | Edit stream, metadata, atau byte constant biasa gagal sebelum nilai dipakai |
+| Dispatch guard hanya memeriksa jumlah handler | Jumlah, tipe key/value, dan seal key opcode diverifikasi saat startup | Penggantian key opcode sederhana terdeteksi |
+| Nama field `status`, `position`, `stack`, `cells`, dan lainnya stabil | Tiga belas nama field frame dibuat acak per build | Fingerprint state VM dan script tracer berbasis nama kehilangan anchor tetap |
+| Helper scheduler/trace dan cabang counter tetap ada meski dinonaktifkan | Source helper serta counter tidak dipancarkan saat setting nol | Medium lebih kecil dan menghindari biaya cabang per instruction |
+
+Handler tetap melakukan operasi Lua yang pada akhirnya dapat dikenali secara semantik setelah runtime berhasil diinstrumentasi. Integrity seal tidak memiliki secret eksternal; attacker yang menguasai client dapat mempatch checker atau menghitung ulang nilai. Perubahan ini menaikkan biaya otomatisasi dan pemetaan lintas-build, bukan membuat devirtualization mustahil.
+
 ## Bukti pengujian
 
 Perintah utama: `npm test`. Node 24.18.0; compiler dan differential Lua dijalankan melalui Wasmoon (Lua 5.4). Runtime Luau memakai executable resmi 0.737. SHA256 arsip `luau-windows.zip`: `8cd28be648f3e5cc4bfc977d2344e43540ade5f3524440b171eecf54d3a4fb7c`.
 
-Hasil run terbaru setelah pembaruan parser typed Luau dan emitter `MixedHex`: **26 tests, 25 passed, 0 failed, 1 skipped**, exit code 0, sekitar 66,3 detik. Skip tersisa adalah eksekusi otomatis dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan dan laporan live pengguna sudah tersedia. `git diff --check` juga lulus.
+Hasil run terbaru setelah hardening VM: **31 tests, 30 passed, 0 failed, 1 skipped**, exit code 0, sekitar 68,8 detik. Skip tersisa adalah eksekusi otomatis dengan host fixture eksternal yang mencakup API game; bounded startup fixture bawaan dan laporan live pengguna sudah tersedia. `git diff --check` juga lulus.
 
 | Pemeriksaan | Bukti |
 | --- | --- |
@@ -45,9 +60,9 @@ Artefak lokal berada di `test-results/`: output `roblox.medium.lua`, dump `roblo
 ### File target yang diterima
 
 - Source: 309.966 byte, SHA256 `0aee51e4ad8e29e13e1a35f3d1eb586eceb4de9c5d51a6ce0c6aaeeceb18d47b`.
-- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.007.793 byte, Medium + LuaU, seed 42, build sekitar 17,6 detik pada full suite paralel terakhir.
-- SHA256 output terbaru: `53672b31d6879b173b8f785ddc16af7ce388ee5a42f3457512535cdcee0a5a55`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
-- Emitter `MixedHex` menghasilkan 76.141 literal `0x...` pada output target tanpa mengubah jumlah byte dibanding keluaran desimal sebelumnya. Hex merupakan variasi lexical dan tidak diklaim sebagai penghambat dynamic dump.
+- Output terbaru `test-results/04_stealanegg.medium.lua`: 2.040.085 byte, Medium + LuaU, seed 42, build sekitar 16,6 detik.
+- SHA256 output terbaru: `1779b947844cd4b16fc0c4a1b8dbf603b6be9b2ce04e796473228158001d7129`. Metadata otomatis ada di `test-results/04_stealanegg.build.json`.
+- Emitter `MixedHex` menghasilkan 76.707 literal `0x...` pada output target. Hex merupakan variasi lexical dan tidak diklaim sebagai penghambat dynamic dump.
 - Native Luau binary tanpa debug info berhasil dibuat. Tujuh pola yang diminta serta `GetService` tidak ditemukan pada scan dump.
 - Startup fixture menghasilkan `STARTUP_OK instances=6 tabs=7 configBuilds=1 pendingJobs=1` untuk source maupun output, pada kedua cabang loader. HTTP mengembalikan mock UI lokal; tidak ada download/jaringan nyata.
 - Satu job animasi dijalankan sampai yield pertama. Game feature tab, interaction/input callbacks, getgc terhadap object game, __namecall hooks, respawn dan fitur teleport belum diuji. Semua feature tab tetap lazy; hanya Config yang dibangun dalam tes tambahan.
@@ -106,7 +121,7 @@ Stack scalar tidak lagi membungkus setiap nilai dalam packet table. Packet hanya
 
 Auto-yield Medium dinonaktifkan (`YieldEvery = 0`). Uji Luau CLI menemukan bahwa yield dari entry thread tertentu dapat berhenti dengan `thread yielded unexpectedly`; `pcall(task.wait)` tidak menjamin kasus itu dapat dipulihkan. Yield tetap tersedia sebagai opsi eksplisit, tetapi bukan mekanisme pencegah freeze default.
 
-Build final berkurang dari 2.905.652 menjadi sekitar 2.007.793 byte (sekitar 30,9%). Pada fixture `getgc` yang sama, hasil akhir adalah:
+Pada tahap optimasi startup sebelumnya, build berkurang dari 2.905.652 menjadi sekitar 2.007.793 byte (sekitar 30,9%). Pada fixture `getgc` yang sama, hasil tahap tersebut adalah:
 
 | Tabel pada mock getgc | Medium sebelum | Medium sesudah | Heap delta sebelum | Heap delta sesudah |
 | --- | ---: | ---: | ---: | ---: |
@@ -114,7 +129,7 @@ Build final berkurang dari 2.905.652 menjadi sekitar 2.007.793 byte (sekitar 30,
 | 1.000 | 890,70 ms | 309,32 ms | 10.580 KB | 9.511 KB |
 | 5.000 | 4.610,77 ms | 1.567,65 ms | 15.819 KB | 11.066 KB |
 
-Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Setelah pembaruan parser, full suite menjadi **25 pass, 0 fail, 1 skip**; startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
+Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari proses benchmark yang sama. Semua varian selesai dengan exit 0. Full suite terbaru menjadi **31 tests: 30 pass, 0 fail, 1 skip**; startup source/output tetap menghasilkan trace identik, kompilasi serta binary dump Luau lulus, dan static scan output tetap nol temuan untuk `game:GetService`, `ReplicatedStorage`, `HttpGet`, `RemoteEvent`, `RemoteFunction`, `AskWearStill`, dan `CodexUI`.
 
 `04_stealanegg.lua` masih melakukan crawl `getgc(true)` sebelum membuat UI. Waktu bagian ini bertambah mengikuti jumlah object/table pada client, jadi VM yang lebih cepat mengurangi stall tetapi tidak dapat membuat scan tanpa batas menjadi konstan. Jika koleksi executor jauh lebih besar daripada fixture, pemindahan scan ke sesudah UI atau pemrosesan batch perlu dilakukan pada source aplikasi agar UI selalu muncul lebih dahulu.
 
@@ -124,4 +139,4 @@ Angka dapat berfluktuasi antar-run; perbandingan di setiap baris berasal dari pr
 
 Corpus ditemukan dan memperbaiki perbedaan Luau pada `{fn()}` ketika hasil terakhir memiliki lubang nil. VM sekarang menggunakan reservasi array Luau ketika perlu agar layout table constructor dan hasil operator panjang sesuai source. Run final menjalankan delapan kategori pada seed 13 dan 907, ditambah delapan generated programs: seluruh output sama dengan source.
 
-Benchmark generik `npm run benchmark:vm` membangun workload sendiri dan tidak membaca file pengguna. Pada run 5.000 callback terakhir, source menghasilkan `BENCH_OK 50040000` dalam sekitar 2,14 ms dan Medium menghasilkan nilai sama dalam sekitar 710,62 ms. Angka ini dipakai untuk mendeteksi regresi performa relatif antar-build, bukan sebagai jaminan waktu pada perangkat Roblox.
+Benchmark generik `npm run benchmark:vm` membangun workload sendiri dan tidak membaca file pengguna. Tiga run final 5.000 callback menghasilkan `BENCH_OK 50040000`; waktu Medium adalah 811,19 / 820,67 / 822,64 ms, median 820,67 ms, dengan output 37.044 byte. Median ini sekitar 4,3% di atas angka hardening sebelumnya 787,05 ms dan sekitar 15,5% di atas baseline audit 710,62 ms. Biaya utama tambahan berasal dari mask operand, tiga jalur decoder, layout record acak, dan integrity metadata; full checksum hanya berjalan sekali saat tiap prototype pertama dipakai. Angka ini dipakai untuk mendeteksi regresi relatif antar-build, bukan sebagai jaminan waktu pada perangkat Roblox.
